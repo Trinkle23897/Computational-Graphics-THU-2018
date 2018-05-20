@@ -31,6 +31,7 @@ struct P3{
 	P3 operator&(const P3&a) const {return P3(y*a.z-z*a.y, z*a.x-x*a.z, x*a.y-y*a.x);}
 	P3 cross(const P3&a) const {return P3(y*a.z-z*a.y, z*a.x-x*a.z, x*a.y-y*a.x);}
 	P3 norm() const {return (*this)/len();}
+	P3 clip() const {return P3(x>1?1:x<0?0:x, y>1?1:y<0?0:y, z>1?1:z<0?0:z);}
 	P3 reflect(const P3&n) const {return (*this)-n*2.*n.dot(*this);}
 	P3 refract(const P3&n, ld ni, ld nr) const { // smallPT1.ppt Page#72
 		ld cosi = this->norm().dot(n);

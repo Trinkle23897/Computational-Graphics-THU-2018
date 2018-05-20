@@ -13,7 +13,7 @@ struct Sphere{
 	ld rad, ns;
 	P3 o, e, c;
 	Refl_t refl;
-	Sphere(ld rad_, ld ns_, P3 o_, P3 e_, P3 c_, Refl_t refl_): 
+	Sphere(ld rad_, P3 o_, P3 e_, P3 c_, Refl_t refl_, ld ns_=1.5): 
 		rad(rad_), ns(ns_), o(o_), e(e_), c(c_), refl(refl_) {}
 	ld intersect(const Ray&r) const {
 		P3 ro = o-r.o;
@@ -24,18 +24,19 @@ struct Sphere{
 		return b-d>eps ? b-d : b+d>eps? b+d : 0;
 	}
 };
+Sphere scene[] = {//Scene: radius, position, emission, color, material 
+   Sphere(1e5, P3( 1e5+1,40.8,81.6), P3(),P3(.1,.25,.25),DIFF),//Left 
+   Sphere(1e5, P3(-1e5+99,40.8,81.6),P3(),P3(.25,.75,.25),DIFF),//Rght 
+   Sphere(1e5, P3(50,40.8, 1e5),     P3(),P3(.75,.75,.75),DIFF),//Back 
+   Sphere(1e5, P3(50,40.8,-1e5+170), P3(),P3(.25,.25,.25),DIFF),//Frnt 
+   Sphere(1e5, P3(50, 1e5, 81.6),    P3(),P3(.75,.75,.75),DIFF),//Botm 
+   Sphere(1e5, P3(50,-1e5+81.6,81.6),P3(),P3(.75,.75,.75),DIFF),//Top 
+   Sphere(16.5,P3(27,16.5,47),       P3(),P3(1,1,1)*.999, SPEC),//Mirr 
+   Sphere(16.5,P3(73,16.5,78),       P3(),P3(1,1,1)*.999, REFR),//Glas 
+   Sphere(16.5,P3(20,60,100),       P3(),P3(.75,.25,.25), DIFF),//Glas 
+   Sphere(600, P3(50,681.6-.27,81.6),P3(12,12,12),  P3(), DIFF) //Lite 
+}; 
 
-Sphere scene[] = {
-	Sphere(1e5, 1.5, P3( 1e5+1,40.8,81.6), P3(),P3(.75,.25,.25),DIFF),//Left 
-	Sphere(1e5, 1.5, P3(-1e5+99,40.8,81.6),P3(),P3(.25,.25,.75),DIFF),//Rght 
-	Sphere(1e5, 1.5, P3(50,40.8, 1e5),     P3(),P3(.75,.75,.75),DIFF),//Back 
-	Sphere(1e5, 1.5, P3(50,40.8,-1e5+170), P3(),P3(),           DIFF),//Frnt 
-	Sphere(1e5, 1.5, P3(50, 1e5, 81.6),    P3(),P3(.75,.75,.75),DIFF),//Botm 
-	Sphere(1e5, 1.5, P3(50,-1e5+81.6,81.6),P3(),P3(.75,.75,.75),DIFF),//Top 
-	Sphere(16.5,1.5, P3(27,16.5,47),       P3(),P3(1,1,1)*.999, SPEC),//Mirr 
-	Sphere(16.5,1.5, P3(73,16.5,78),       P3(),P3(1,1,1)*.999, REFR),//Glas 
-	Sphere(600, 1.5, P3(50,681.6-.27,81.6),P3(12,12,12),  P3(), DIFF) //Lite 
-};
 int n=sizeof(scene)/sizeof(Sphere);
 
 int output(ld x) {return int(.5+mcol*pow(x<0?0:x>1?1:x,1/2.2));}
@@ -81,31 +82,34 @@ P3 radiance(const Ray&r, int dep,unsigned short *X){
 	}
 }
 
-P3 c[2000][2000];
 int main(int argc, char*argv[])
 {
-	int w=atoi(argv[1]), h=atoi(argv[2]), samp=atoi(argv[4]);
-	Ray cam(P3(50,52,295.6), P3(0,-0.042612,-1).norm());
-	P3 cx=P3(w*.5/h), cy=(cx&cam.d).norm()*.5, r;
+	int w=atoi(argv[1]), h=atoi(argv[2]), samp=atoi(argv[4])/4;
+	Ray cam(P3(70,32,280), P3(-0.15,0.05,-1).norm());
+	P3 cx=P3(w*.5/h), cy=(cx&cam.d).norm()*.5, r, *c=new P3[w*h];
 #pragma omp parallel for schedule(dynamic, 1) private(r)
 	for(int y=0;y<h;++y){
-		fprintf(stderr,"\r%5.2f%%",100.*y/h);
+		fprintf(stderr,"\rUsing %d spp  %5.2f%%",samp*4,100.*y/h);
 		for(int x=0;x<w;++x){
-		unsigned short X[3]={y,y*x,y*x*y};
-			r=P3();
-			for(int s=0;s<samp;++s){
-				ld r1=2*erand48(X), dx=r1<1 ? sqrt(r1): 2-sqrt(2-r1);
-				ld r2=2*erand48(X), dy=r2<1 ? sqrt(r2): 2-sqrt(2-r2);
-				P3 d=cx*((dx/2+x)/w-.5)+cy*((dy/2+y)/h-.5)+cam.d; 
-				r+=radiance(Ray(cam.o+d*140,d.norm()),0,X);
-			}
-			c[y][x]=r/samp;
+			for(int sy=0;sy<2;++sy)
+				for(int sx=0;sx<2;++sx)
+				{
+					unsigned short X[3]={y+sx,y*x+sy,y*x*y+sx*sy};
+					r.x=r.y=r.z=0;
+					for(int s=0;s<samp;++s){
+						ld r1=2*erand48(X), dx=r1<1 ? sqrt(r1): 2-sqrt(2-r1);
+						ld r2=2*erand48(X), dy=r2<1 ? sqrt(r2): 2-sqrt(2-r2);
+						P3 d=cx*((sx+dx/2+x)/w-.5)+cy*((sy+dy/2+y)/h-.5)+cam.d; 
+						r+=radiance(Ray(cam.o+d*120,d.norm()),0,X);
+					}
+					c[y*w+x]+=(r/samp).clip()/4;
+				}
 		}
 	}
 	FILE*f=fopen(argv[3],"w");
 	fprintf(f,"P6\n%d %d\n%d\n", w,h,mcol);
-	for(int y=0;y<h;++y)
-		for(int x=0;x<w;++x)
-			fprintf(f,"%c%c%c",output(c[y][x].x),output(c[y][x].y),output(c[y][x].z));
-	return 0;
+	for(int y=h-1;y>=0;--y)
+		for(int x=w-1;x>=0;--x)
+			fprintf(f,"%c%c%c",output(c[y*w+x].x),output(c[y*w+x].y),output(c[y*w+x].z));
+	return!puts("");
 }
