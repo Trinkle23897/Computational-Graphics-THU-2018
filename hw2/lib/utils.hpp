@@ -27,6 +27,7 @@ struct P3{
 	ld max() const {return x>y&&x>z?x:y>z?y:z;}
 	ld len() const {return sqrt(x*x + y*y + z*z);}
 	ld len2() const {return x*x + y*y + z*z;}
+	P3 mult(const P3&a) const {return P3(x*a.x, y*a.y, z*a.z);}
 	P3 operator&(const P3&a) const {return P3(y*a.z-z*a.y, z*a.x-x*a.z, x*a.y-y*a.x);}
 	P3 cross(const P3&a) const {return P3(y*a.z-z*a.y, z*a.x-x*a.z, x*a.y-y*a.x);}
 	P3 norm() const {return (*this)/len();}
