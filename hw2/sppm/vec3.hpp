@@ -9,6 +9,8 @@ struct P3{
 	P3 operator-() const {return P3(-x, -y, -z);}
 	P3 operator+(const P3&a) const {return P3(x+a.x, y+a.y, z+a.z);}
 	P3 operator-(const P3&a) const {return P3(x-a.x, y-a.y, z-a.z);}
+	P3 operator+(ld p) const {return P3(x+p, y+p, z+p);}
+	P3 operator-(ld p) const {return P3(x-p, y-p, z-p);}
 	P3 operator*(ld p) const {return P3(x*p, y*p, z*p);}
 	P3 operator/(ld p) const {return P3(x/p, y/p, z/p);}
 	bool operator==(const P3&a) const {return x==a.x && y==a.y && z==a.z;}

@@ -7,6 +7,7 @@
 typedef double ld;
 const ld PI = acos(-1);
 const ld eps = 1e-6;
-const ld INF = 1<<20;
+const ld INF = 1 << 20;
+enum Refl_t { DIFF, SPEC, REFR };
 
 #endif // __UTILS_H__
