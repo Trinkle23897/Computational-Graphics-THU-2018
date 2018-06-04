@@ -9,6 +9,7 @@ class Ray
 public:
 	P3 o, d;
 	Ray(P3 o_, P3 d_): o(o_), d(d_) {}
+	P3 get(ld t) {return o + d * t;}
 };
 
 #endif // __RAY_H__
