@@ -17,6 +17,8 @@ struct P3{
 	bool operator!=(const P3&a) const {return x!=a.x || y!=a.y || z!=a.z;}
 	P3&operator+=(const P3&a) {return *this = *this + a;}
 	P3&operator-=(const P3&a) {return *this = *this - a;}
+	P3&operator+=(ld p) {return *this = *this + p;}
+	P3&operator-=(ld p) {return *this = *this - p;}
 	P3&operator*=(ld p) {return *this = *this * p;}
 	P3&operator/=(ld p) {return *this = *this / p;}
 	ld operator|(const P3&a) const {return x*a.x + y*a.y + z*a.z;}
