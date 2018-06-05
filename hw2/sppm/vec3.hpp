@@ -44,8 +44,8 @@ struct P3{
 	void print() const {std::cout << x << " " << y << " " << z << std::endl;}
 };
 
-P3 min(P3 a, P3 b) {return P3(std::min(a.x, b.x), std::min(a.y, b.y), std::min(a.z, b.z))}
-P3 max(P3 a, P3 b) {return P3(std::max(a.x, b.x), std::max(a.y, b.y), std::max(a.z, b.z))}
+P3 min(P3 a, P3 b) {return P3(std::min(a.x, b.x), std::min(a.y, b.y), std::min(a.z, b.z));}
+P3 max(P3 a, P3 b) {return P3(std::max(a.x, b.x), std::max(a.y, b.y), std::max(a.z, b.z));}
 
 // assume P3() == NULL (0,0,0)
 

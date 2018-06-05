@@ -8,37 +8,37 @@
 
 class Texture {
 public:
+	P3 color, emission;
+	Refl_t refl;
 	std::string filename;
 	unsigned char *buf;
 	int w, h, c;
 	Texture(): buf(NULL), w(0), h(0), c(0) {}
-	Texture(std::string _): filename(_) {
-		if(_ == "")
-			return;
-		buf = stbi_load(filename.c_str(), &w, &h, &c, 0);
+	Texture(std::string _, P3 col, P3 e, Refl_t r): filename(_), color(col), emission(e), refl(r) {
+		if(_ != "")
+			buf = stbi_load(filename.c_str(), &w, &h, &c, 0);
+		else
+			buf = NULL;
 	}
-	std::pair<Refl_t, P3> getcol(ld x, ld y) {
+	std::pair<Refl_t, P3> getcol(ld a, ld b) {
 		// assume x, y in [0, 1]
-		if (buf == NULL || x < 0 || y < 0 || x > 1 || y > 1)
-			return std::make_pair(SPEC, P3());
-		int pw = int(x * w), ph = int(y * h);
+		if (buf == NULL)
+			return std::make_pair(refl, color);
+		int pw = (int(a * w) % w + w) % w, ph = (int(b * h) % h + h) % h;
 		int idx = ph * w * c + pw * c;
 		int x = buf[idx + 0], y = buf[idx + 1], z = buf[idx + 2];
 		if (x == 233 && y == 233 && z == 233) {
-			return std::make_pair(SPEC, P3());
+			return std::make_pair(SPEC, P3(1, 1, 1)*.999);
 		}
-		return std::pair<DIFF, P3(x, y, z) / 255.>;
+		return std::make_pair(DIFF, P3(x, y, z) / 255.);
 	}
 };
 
 class Object {
 public:
-	P3 color, emision;
-	Texture* texture;
-	Object(P3 c, P3 e, std::string tname): color(c), emision(e), texture(NULL) {
-		if (tname != "")
-			texture = new Texture(tname);
-	}
+	Texture texture;
+	Object(Refl_t refl, P3 color, P3 emission, std::string tname):
+		texture(tname, color, emission, refl) {}
 	virtual std::pair<ld, P3> intersect(Ray) {puts("virtual error in intersect!");}
 		// If no intersect, then return (INF, (0,0,0))
 	virtual std::pair<P3, P3> aabb() {puts("virtual error in aabb!");}
@@ -50,8 +50,8 @@ class CubeObject: public Object {
 //store (x0, y0, z0) - (x1, y1, z1)
 public:
 	P3 m0, m1;
-	CubeObject(P3 m0_, P3 m1_, std::string tname = "", P3 color = P3(), P3 emission = P3()): 
-		m0(min(m0_, m1_)), m1(max(m0_, m1_)), Object(color, emission, tname) {}
+	CubeObject(P3 m0_, P3 m1_, Refl_t refl, P3 color = P3(), P3 emission = P3(), std::string tname = ""):
+		m0(min(m0_, m1_)), m1(max(m0_, m1_)), Object(refl, color, emission, tname) {}
 	virtual P3 norm(Ray ray, ld t) {
 		P3 p = ray.get(t);
 		if (std::abs(p.x - m0.x) < eps || std::abs(p.x - m1.x) < eps)
@@ -107,7 +107,7 @@ public:
 		return std::make_pair(ft, fq);
 	}
 	virtual std::pair<P3, P3> aabb() {
-		return std::make_pair<m0, m1>;
+		return std::make_pair(m0, m1);
 	}
 };
 
@@ -115,8 +115,8 @@ class SphereObject: public Object {
 public:
 	P3 o; 
 	ld r;
-	SphereObject(P3 o_, ld r_, std::string tname = "", P3 color = P3(), P3 emission = P3()):
-		o(o_), r(r_), Object(color, emission, tname) {}
+	SphereObject(P3 o_, ld r_, Refl_t refl, P3 color = P3(), P3 emission = P3(), std::string tname = ""):
+		o(o_), r(r_), Object(refl, color, emission, tname) {}
 	virtual std::pair<ld, P3> intersect(Ray ray) {
 		P3 ro = o - ray.o;
 		ld b = ray.d.dot(ro);
@@ -124,12 +124,12 @@ public:
 		if (d < 0) return std::make_pair(INF, P3());
 		else d = sqrt(d);
 		ld t = b - d > eps ? b - d : b + d > eps? b + d : -1;
-		if (t < -eps)
+		if (t < 0)
 			return std::make_pair(INF, P3());
 		return std::make_pair(t, ray.get(t));
 	}
 	virtual std::pair<P3, P3> aabb() {
-		return std::make_pair<o-r, o+r>;
+		return std::make_pair(o-r, o+r);
 	}
 	virtual P3 norm(Ray ray, ld t) {
 		P3 p = ray.get(t);
@@ -137,14 +137,14 @@ public:
 		assert(d < eps);
 		return (p - o).norm();
 	}
-}
+};
 
 class PlaneObject: public Object {
 // store ax+by+cz=1
 public:
 	P3 n, n0;
-	PlaneObject(P3 n_, std::string tname = "", P3 color = P3(), P3 emission = P3()):
-		n(n_), Object(color, emission, tname) {
+	PlaneObject(P3 n_, Refl_t refl, P3 color = P3(), P3 emission = P3(), std::string tname = ""):
+		n(n_), Object(refl, color, emission, tname) {
 			n0 = n.norm();
 		}
 	virtual std::pair<ld, P3> intersect(Ray ray) {

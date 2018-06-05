@@ -8,7 +8,7 @@ class Ray
 {
 public:
 	P3 o, d;
-	Ray(P3 o_, P3 d_): o(o_), d(d_) {}
+	Ray(P3 o_, P3 d_): o(o_), d(d_.norm()) {}
 	P3 get(ld t) {return o + d * t;}
 };
 
