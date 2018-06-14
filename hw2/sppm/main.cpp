@@ -2,6 +2,8 @@
 
 int main(int argc, char *argv[])
 {
+	Ray ray(P3(427,1000,447),P3(-1,-2,-1.5).norm());
+	find_intersect_simple(ray);
 	int w=atoi(argv[1]), h=atoi(argv[2]), samp=atoi(argv[4])/4;
 	Ray cam(P3(70,32,280), P3(-0.15,0.05,-1).norm());
 	P3 cx=P3(w*.5/h), cy=(cx&cam.d).norm()*.5, r, *c=new P3[w*h];

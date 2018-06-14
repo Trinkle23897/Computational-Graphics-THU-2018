@@ -3,6 +3,7 @@
 
 #include "utils.hpp"
 #include "ray.hpp"
+#include "bezier.hpp"
 
 // enum Refl_t { DIFF, SPEC, REFR };
 
@@ -17,6 +18,108 @@ public:
 	virtual std::pair<P3, P3> aabb() {puts("virtual error in aabb!");}
 	virtual P3 norm(P3) {puts("virtual error in norm!");}
 		// return norm vec out of obj
+};
+
+class BezierObject: public Object {
+// the curve will rotate line (x=pos.x and z=pos.z) as pivot
+public:
+	BezierCurve2D curve;
+	P3 pos; // the buttom center point
+	ld bezier_cache; // the last intersect result given by bezier
+	BezierObject(P3 pos_, BezierCurve2D c_, Texture t):
+		pos(pos_), curve(c_), Object(t) {}
+	BezierObject(P3 pos_, BezierCurve2D c_, Refl_t refl, ld brdf = 1.5, P3 color = P3(), P3 emission = P3(), std::string tname = ""):
+		pos(pos_), curve(c_), Object(refl, color, emission, brdf, tname) {}
+	virtual std::pair<ld, P3> intersect(Ray ray) {
+		ld final_dis = INF, dis;
+		// check for |dy|<eps
+		if (std::abs(ray.d.y) < eps)
+		{
+
+			// return xxx;
+		}
+		// check for top circle: the plane is y=pos.y + curve.height
+		
+		// check for buttom circle: the plane is y=pos.y
+
+		// normal case
+		// calc ay^2+by+c
+		ld a = 0, b = 0, c = 0, t1, t2;
+		// (xo-x'+xd/yd*(y-yo))^2 -> (t1+t2*y)^2
+		t1 = ray.o.x - pos.x - ray.d.x / ray.d.y * ray.o.y;
+		t2 = ray.d.x / ray.d.y;
+		a += t2 * t2;
+		b += 2 * t1 * t2;
+		c += t1 * t1;
+		// (zo-z'+zd/yd*(y-yo))^2 -> (t1+t2*y)^2
+		t1 = ray.o.z - pos.z - ray.d.z / ray.d.y * ray.o.y;
+		t2 = ray.d.z / ray.d.y;
+		a += t2 * t2;
+		b += 2 * t1 * t2;
+		c += t1 * t1;
+		// ay^2+by+c -> a'(y-b')^2+c'
+		c = c - b * b / 4 / a;
+		b = -b / 2 / a;
+		// printf("%lf %lf %lf\n",a,b,c);
+		// solve sqrt(a(y(t)-b)^2+c)=x(t)
+		// f(t) = x(t) - sqrt(a(y(t)-b)^2+c)
+		// f'(t) = x'(t) - a(y(t)-b)*y'(t) / sqrt(...)
+		if (c > curve.max2) // no intersect
+			return std::make_pair(INF, P3());
+		P3 p0 = curve.getpos(0), p1 = curve.getpos(1);
+		P3 dp0 = curve.getdir(eps), dp1 = curve.getpos(1-eps);
+		// if t is not in [0, 1] then assume f(t) is a linear function
+		P3 pt, dpt;
+		for (ld _ = 0; _ <= 1; _ += 0.2)
+		{
+			ld t = _, ft, dft, x, y, dx, dy;
+			P3 loc, dir;
+			for (int i = 10; i--; )
+			{
+				if (t <= 0)
+				{
+					x = p0.x + t * dp0.x, dx = dp0.x;
+					y = p0.y + t * dp0.y, dy = dp0.y;
+				}
+				else if (t >= 1)
+				{
+					x = p1.x + (t - 1) * dp1.x, dx = dp1.x;
+					y = p1.y + (t - 1) * dp1.y, dy = dp1.y;
+				}
+				else
+				{
+					loc = curve.getpos(t), dir = curve.getdir(t);
+					x = loc.x, dx = dir.x;
+					y = loc.y, dy = dir.y;
+				}
+				// printf("%lf %lf %lf\n",t,x,y);
+				ld sq = sqrt(a * (y - b) * (y - b) + c);
+				ft = x - sq;
+				dft = dx - a * (y - b) * dy / sq;
+				t -= ft / dft;
+				if (std::abs(ft / dft) < eps)
+					break;
+			}
+			if (t <= 0 || t >= 1)
+				continue;
+			loc = curve.getpos(t), dir = curve.getdir(t);
+			x = loc.x, dx = dir.x;
+			y = loc.y, dy = dir.y;
+			ft = x - sqrt(a * (y - b) * (y - b) + c);
+			dft = dx - a * (y - b) * dy / (x - ft);
+			if (std::abs(ft) > eps)
+				continue;
+			// printf("%lf %lf %lf %lf %lf %lf %lf\n",t,x,y,dx,dy,ft,dft);
+			// calc t for ray
+			
+		}
+	}
+	virtual std::pair<P3, P3> aabb() {
+		return std::make_pair(P3(pos.x - curve.max, pos.y, pos.z - curve.max), P3(pos.x + curve.max, pos.y + curve.height, pos.z + curve.max));
+	}
+	virtual P3 norm(P3 p) {
+
+	}
 };
 
 class CubeObject: public Object {
@@ -115,7 +218,7 @@ public:
 };
 
 class PlaneObject: public Object {
-// store ax+by+cz=1
+// store ax+by+cz=1 n=(a,b,c)
 public:
 	P3 n, n0;
 	PlaneObject(P3 n_, Texture t):
