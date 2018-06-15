@@ -9,7 +9,7 @@ std::pair<int, ld> find_intersect_simple(Ray ray) {
 	int id = -1;
 	for (int i = 0; i < scene_num; ++i) {
 		std::pair<ld, P3> tmp = scene[i]->intersect(ray);
-		if (tmp.first < INF && tmp.second.len2() > eps && tmp.first < t) {
+		if (tmp.first < INF / 2 && tmp.second.len2() > eps && tmp.first < t) {
 			t = tmp.first;
 			id = i;
 		}
@@ -28,7 +28,13 @@ P3 pt_render(Ray ray, int dep, unsigned short *X){
 	Object* obj = scene[intersect_result.first];
 	Texture&texture = obj->texture;
 	P3 x = ray.get(intersect_result.second);
-	std::pair<Refl_t, P3> feature = texture.getcol(x.z / 15, x.x / 15);
+	std::pair<Refl_t, P3> feature;
+	if (texture.filename == "star.png")
+		feature = texture.getcol(x.z / 15, x.x / 15);
+	else if (texture.filename == "vase.png")
+		feature = texture.getcol(obj->cache_u, obj->cache_t);
+	else
+		feature = texture.getcol(x.z, x.x);
 	P3 f = feature.second, n = obj->norm(x), nl = n.dot(ray.d) < 0 ? into = 1, n : -n;
 	ld p = f.max();
 	if(++dep > 5)

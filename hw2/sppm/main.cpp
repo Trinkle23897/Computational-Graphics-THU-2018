@@ -2,8 +2,8 @@
 
 int main(int argc, char *argv[])
 {
-	Ray ray(P3(427,1000,447),P3(-1,-2,-1.5).norm());
-	find_intersect_simple(ray);
+	// Ray ray(P3(427,1000,447),P3(-1,-2,-1.5).norm());
+	// find_intersect_simple(ray);
 	int w=atoi(argv[1]), h=atoi(argv[2]), samp=atoi(argv[4])/4;
 	Ray cam(P3(70,32,280), P3(-0.15,0.05,-1).norm());
 	P3 cx=P3(w*.5/h), cy=(cx&cam.d).norm()*.5, r, *c=new P3[w*h];
@@ -20,7 +20,7 @@ int main(int argc, char *argv[])
 						ld r1=2*erand48(X), dx=r1<1 ? sqrt(r1): 2-sqrt(2-r1);
 						ld r2=2*erand48(X), dy=r2<1 ? sqrt(r2): 2-sqrt(2-r2);
 						P3 d=cx*((sx+dx/2+x)/w-.5)+cy*((sy+dy/2+y)/h-.5)+cam.d; 
-						r+=pt_render(Ray(cam.o+d*120,d.norm()),0,X);
+						r+=pt_render(Ray(cam.o+d*95,d.norm()),0,X);
 					}
 					c[y*w+x]+=(r/samp).clip()/4;
 				}

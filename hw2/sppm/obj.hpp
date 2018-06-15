@@ -10,6 +10,7 @@
 class Object {
 public:
 	Texture texture;
+	ld cache_u, cache_t;
 	Object(Texture t): texture(t) {}
 	Object(Refl_t refl, P3 color, P3 emission, ld brdf, std::string tname):
 		texture(tname, brdf, color, emission, refl) {}
@@ -25,23 +26,64 @@ class BezierObject: public Object {
 public:
 	BezierCurve2D curve;
 	P3 pos; // the buttom center point
-	ld bezier_cache; // the last intersect result given by bezier
+	ld bezier_cache_t, bezier_cache_u; // the last intersect result given by bezier
 	BezierObject(P3 pos_, BezierCurve2D c_, Texture t):
 		pos(pos_), curve(c_), Object(t) {}
 	BezierObject(P3 pos_, BezierCurve2D c_, Refl_t refl, ld brdf = 1.5, P3 color = P3(), P3 emission = P3(), std::string tname = ""):
 		pos(pos_), curve(c_), Object(refl, color, emission, brdf, tname) {}
 	virtual std::pair<ld, P3> intersect(Ray ray) {
-		ld final_dis = INF, dis;
+		ld final_dis = INF, dis = 0;
 		// check for |dy|<eps
-		if (std::abs(ray.d.y) < eps)
+		if (std::abs(ray.d.y) < -1)
 		{
-
-			// return xxx;
+			if (ray.o.y < pos.y || ray.o.y > pos.y + curve.height)
+				return std::make_pair(INF, P3());
+			// solve function pos.y+y(t)=ray.o.y to get x(t)
+			for (ld _ = 0; _ <= 1; _ += 0.5)
+			{
+				ld t = _, ft, dft;
+				for (int i = 10; i--; )
+				{
+					if (t <= 0)
+						ft = pos.y + curve.p0.y + t * curve.dp0.y - ray.o.y, dft = curve.dp0.y;
+					else if (t >= 1)
+						ft = pos.y + curve.p1.y + (t - 1) * curve.dp1.y - ray.o.y, dft = curve.dp1.y;
+					else
+						ft = pos.y + curve.getpos(t).y - ray.o.y, dft = curve.getdir(t).y;
+					t -= ft / dft;
+					if (std::abs(ft) < eps)
+						break;
+				}
+				if (t < 0 || t > 1)
+					continue;
+				P3 loc = curve.getpos(t);
+				ft = pos.y + loc.y - ray.o.y;
+				if (std::abs(ft) > eps)
+					continue;
+				ld dis_to_axis = (P3(pos.x, ray.o.y, pos.z) - ray.o).len();
+				// axis - x
+				if (dis_to_axis - loc.x > eps)
+					final_dis = dis_to_axis - loc.x;
+				else if (dis_to_axis + loc.x > eps)
+					final_dis = dis_to_axis + loc.x;
+				else
+					continue;
+				P3 inter_p = ray.get(final_dis);
+				bezier_cache_t = t;
+				P3 angle_point = inter_p - pos - P3(0, ray.o.y);
+				bezier_cache_u = atan2(angle_point.z, angle_point.x); // between -pi ~ pi
+				if (bezier_cache_u < 0)
+					bezier_cache_u += 2 * PI;
+				cache_t = bezier_cache_t;
+				cache_u = bezier_cache_u / 2 / PI;
+				return std::make_pair(final_dis, inter_p);
+			}
+			return std::make_pair(INF, P3());
 		}
 		// check for top circle: the plane is y=pos.y + curve.height
-		
+		// TODO
 		// check for buttom circle: the plane is y=pos.y
-
+		// TODO
 		// normal case
 		// calc ay^2+by+c
 		ld a = 0, b = 0, c = 0, t1, t2;
@@ -61,13 +103,11 @@ public:
 		c = c - b * b / 4 / a;
 		b = -b / 2 / a;
 		// printf("%lf %lf %lf\n",a,b,c);
-		// solve sqrt(a(y(t)-b)^2+c)=x(t)
-		// f(t) = x(t) - sqrt(a(y(t)-b)^2+c)
-		// f'(t) = x'(t) - a(y(t)-b)*y'(t) / sqrt(...)
+		// solve sqrt(a(y(t)+pos.y-b)^2+c)=x(t)
+		// f(t) = x(t) - sqrt(a(y(t)+pos.y-b)^2+c)
+		// f'(t) = x'(t) - a(y(t)+pos.y-b)*y'(t) / sqrt(...)
 		if (c > curve.max2) // no intersect
 			return std::make_pair(INF, P3());
-		P3 p0 = curve.getpos(0), p1 = curve.getpos(1);
-		P3 dp0 = curve.getdir(eps), dp1 = curve.getpos(1-eps);
 		// if t is not in [0, 1] then assume f(t) is a linear function
 		P3 pt, dpt;
 		for (ld _ = 0; _ <= 1; _ += 0.2)
@@ -78,47 +118,70 @@ public:
 			{
 				if (t <= 0)
 				{
-					x = p0.x + t * dp0.x, dx = dp0.x;
-					y = p0.y + t * dp0.y, dy = dp0.y;
+					x = curve.p0.x + t * curve.dp0.x, dx = curve.dp0.x;
+					y = pos.y + curve.p0.y + t * curve.dp0.y, dy = curve.dp0.y;
 				}
 				else if (t >= 1)
 				{
-					x = p1.x + (t - 1) * dp1.x, dx = dp1.x;
-					y = p1.y + (t - 1) * dp1.y, dy = dp1.y;
+					x = curve.p1.x + (t - 1) * curve.dp1.x, dx = curve.dp1.x;
+					y = pos.y + curve.p1.y + (t - 1) * curve.dp1.y, dy = curve.dp1.y;
 				}
 				else
 				{
 					loc = curve.getpos(t), dir = curve.getdir(t);
 					x = loc.x, dx = dir.x;
-					y = loc.y, dy = dir.y;
+					y = pos.y + loc.y, dy = dir.y;
 				}
 				// printf("%lf %lf %lf\n",t,x,y);
 				ld sq = sqrt(a * (y - b) * (y - b) + c);
 				ft = x - sq;
 				dft = dx - a * (y - b) * dy / sq;
 				t -= ft / dft;
-				if (std::abs(ft / dft) < eps)
+				if (std::abs(ft) < eps)
 					break;
 			}
 			if (t <= 0 || t >= 1)
 				continue;
 			loc = curve.getpos(t), dir = curve.getdir(t);
 			x = loc.x, dx = dir.x;
-			y = loc.y, dy = dir.y;
+			y = pos.y + loc.y, dy = dir.y;
 			ft = x - sqrt(a * (y - b) * (y - b) + c);
 			dft = dx - a * (y - b) * dy / (x - ft);
 			if (std::abs(ft) > eps)
 				continue;
-			// printf("%lf %lf %lf %lf %lf %lf %lf\n",t,x,y,dx,dy,ft,dft);
 			// calc t for ray
-			
+			dis = (y - ray.o.y) / ray.d.y;
+			if (dis < eps)
+				continue;
+			P3 inter_p = ray.get(dis);
+			if (std::abs((P3(pos.x, y, pos.z) - inter_p).len2() - x * x) > eps)
+				continue;
+			if (dis < final_dis)
+			{
+				final_dis = dis;
+				bezier_cache_t = t;
+				P3 angle_point = inter_p - P3(pos.x, y, pos.z);
+				bezier_cache_u = atan2(angle_point.z, angle_point.x); // between -pi ~ pi
+				if (bezier_cache_u < 0)
+					bezier_cache_u += 2 * PI;
+				cache_u = bezier_cache_u / 2 / PI;
+				cache_t = bezier_cache_t;
+				// printf("%lf %lf %lf %lf\n",t,inter_p.x, inter_p.y, inter_p.z);
+			}
 		}
+		if (final_dis < INF / 2)
+			return std::make_pair(final_dis, ray.get(final_dis));
+		else
+			return std::make_pair(INF, P3());
 	}
 	virtual std::pair<P3, P3> aabb() {
 		return std::make_pair(P3(pos.x - curve.max, pos.y, pos.z - curve.max), P3(pos.x + curve.max, pos.y + curve.height, pos.z + curve.max));
 	}
 	virtual P3 norm(P3 p) {
-
+		P3 dir = curve.getdir(bezier_cache_t);
+		P3 d_surface = P3(cos(bezier_cache_u), dir.y / dir.x, sin(bezier_cache_u));
+		P3 d_circ = P3(-sin(bezier_cache_u), 0, cos(bezier_cache_u));
+		return d_circ.cross(d_surface).norm();
 	}
 };
 

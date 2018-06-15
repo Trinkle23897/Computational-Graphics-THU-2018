@@ -10,6 +10,7 @@ public:
 	ld *dx, *dy, max, height, max2;
 	int n;
 	ld last_t;
+	P3 p0, p1, dp0, dp1;
 	// x(t) = \sum_{i=0}^n dx_i * t^i
 	// y(t) = \sum_{i=0}^n dy_i * t^i
 	BezierCurve2D(ld* px, ld* py, int n_): n(n_) {
@@ -50,6 +51,8 @@ public:
 		max += 1e-6;
 		height += 1e-6;
 		max2 = max * max;
+		p0 = getpos(0), p1 = getpos(1);
+		dp0 = getdir(eps), dp1 = getpos(1-eps);
 	}
 	P3 getpos(ld t)
 	{
