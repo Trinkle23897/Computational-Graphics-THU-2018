@@ -10,7 +10,6 @@
 class Object {
 public:
 	Texture texture;
-	ld cache_u, cache_t;
 	Object(Texture t): texture(t) {}
 	Object(Refl_t refl, P3 color, P3 emission, ld brdf, std::string tname):
 		texture(tname, brdf, color, emission, refl) {}
@@ -19,6 +18,7 @@ public:
 	virtual std::pair<P3, P3> aabb() {puts("virtual error in aabb!");}
 	virtual P3 norm(P3) {puts("virtual error in norm!");}
 		// return norm vec out of obj
+	virtual P3 change_for_bezier(P3) {puts("virtual error in bezier!");}
 };
 
 class BezierObject: public Object {
@@ -26,60 +26,86 @@ class BezierObject: public Object {
 public:
 	BezierCurve2D curve;
 	P3 pos; // the buttom center point
-	ld bezier_cache_t, bezier_cache_u; // the last intersect result given by bezier
 	BezierObject(P3 pos_, BezierCurve2D c_, Texture t):
 		pos(pos_), curve(c_), Object(t) {}
 	BezierObject(P3 pos_, BezierCurve2D c_, Refl_t refl, ld brdf = 1.5, P3 color = P3(), P3 emission = P3(), std::string tname = ""):
 		pos(pos_), curve(c_), Object(refl, color, emission, brdf, tname) {}
-	virtual std::pair<ld, P3> intersect(Ray ray) {
-		ld final_dis = INF, dis = 0;
-		// check for |dy|<eps
-		if (std::abs(ray.d.y) < -1)
+	ld solve_t(ld yc) { // solve y(t)=yc
+		assert(0 <= yc && yc <= curve.height);
+		ld t = .5, ft, dft;
+		for (int i = 10; i--; )
 		{
-			if (ray.o.y < pos.y || ray.o.y > pos.y + curve.height)
+			if (t < 0) t = 0;
+			else if (t > 1) t = 1;
+			ft = curve.getpos(t).y - yc, dft = curve.getdir(t).y;
+			if (std::abs(ft) < eps)
+				return t;
+			t -= ft / dft;
+		}
+		return -1;
+	}
+	virtual P3 change_for_bezier(P3 inter_p) {
+		ld t = solve_t(inter_p.y - pos.y);
+		ld u = atan2(inter_p.z - pos.z, inter_p.x - pos.x); // between -pi ~ pi
+		if (u < 0)
+			u += 2 * PI;
+		return P3(u, t);
+	}
+	ld get_sphere_intersect(Ray ray, P3 o, ld r) {
+		P3 ro = o - ray.o;
+		ld b = ray.d.dot(ro);
+		ld d = sqr(b) - ro.dot(ro) + sqr(r);
+		if (d < 0) return -1;
+		else d = sqrt(d);
+		ld t = b - d > eps ? b - d : b + d > eps? b + d : -1;
+		if (t < 0)
+			return -1;
+		return t;
+	}
+	virtual std::pair<ld, P3> intersect(Ray ray) {
+		ld final_dis = INF;
+		// check for |dy|<eps
+		if (std::abs(ray.d.y) < 1e-3)
+		{
+			ld dis_to_axis = (P3(pos.x, ray.o.y, pos.z) - ray.o).len();
+			ld hit = ray.get(dis_to_axis).y;
+			if (hit < pos.y + eps || hit > pos.y + curve.height - eps)
 				return std::make_pair(INF, P3());
 			// solve function pos.y+y(t)=ray.o.y to get x(t)
-			for (ld _ = 0; _ <= 1; _ += 0.5)
-			{
-				ld t = _, ft, dft;
-				for (int i = 10; i--; )
-				{
-					if (t <= 0)
-						ft = pos.y + curve.p0.y + t * curve.dp0.y - ray.o.y, dft = curve.dp0.y;
-					else if (t >= 1)
-						ft = pos.y + curve.p1.y + (t - 1) * curve.dp1.y - ray.o.y, dft = curve.dp1.y;
-					else
-						ft = pos.y + curve.getpos(t).y - ray.o.y, dft = curve.getdir(t).y;
-					t -= ft / dft;
-					if (std::abs(ft) < eps)
-						break;
-				}
-				if (t < 0 || t > 1)
-					continue;
-				P3 loc = curve.getpos(t);
-				ft = pos.y + loc.y - ray.o.y;
-				if (std::abs(ft) > eps)
-					continue;
-				ld dis_to_axis = (P3(pos.x, ray.o.y, pos.z) - ray.o).len();
-				// axis - x
-				if (dis_to_axis - loc.x > eps)
-					final_dis = dis_to_axis - loc.x;
-				else if (dis_to_axis + loc.x > eps)
-					final_dis = dis_to_axis + loc.x;
-				else
-					continue;
-				P3 inter_p = ray.get(final_dis);
-				bezier_cache_t = t;
-				P3 angle_point = inter_p - pos - P3(0, ray.o.y);
-				bezier_cache_u = atan2(angle_point.z, angle_point.x); // between -pi ~ pi
-				if (bezier_cache_u < 0)
-					bezier_cache_u += 2 * PI;
-				cache_t = bezier_cache_t;
-				cache_u = bezier_cache_u / 2 / PI;
-				return std::make_pair(final_dis, inter_p);
-			}
-			return std::make_pair(INF, P3());
+			ld t = solve_t(hit - pos.y);
+			if (t < 0 || t > 1)
+				return std::make_pair(INF, P3());
+			P3 loc = curve.getpos(t);
+			ld ft = pos.y + loc.y - hit;
+			if (std::abs(ft) > eps)
+				return std::make_pair(INF, P3());
+			// assume sphere (pos.x, pos.y + loc.y, pos.z) - loc.x
+			final_dis = get_sphere_intersect(ray, P3(pos.x, pos.y + loc.y, pos.z), loc.x);
+			if (final_dis < 0)
+				return std::make_pair(INF, P3());
+			P3 inter_p = ray.get(final_dis);
+			// printf("y %f small!!!",std::abs((inter_p - P3(pos.x, inter_p.y, pos.z)).len2() - sqr(loc.x)));
+			if (std::abs((inter_p - P3(pos.x, inter_p.y, pos.z)).len2() - sqr(loc.x)) > 1e-1)
+				return std::make_pair(INF, P3());
+			// second iteration, more accuracy
+			hit = inter_p.y;
+			if (hit < pos.y + eps || hit > pos.y + curve.height - eps)
+				return std::make_pair(INF, P3());
+			t = solve_t(hit - pos.y);
+			loc = curve.getpos(t);
+			ft = pos.y + loc.y - hit;
+			if (std::abs(ft) > eps)
+				return std::make_pair(INF, P3());
+			final_dis = get_sphere_intersect(ray, P3(pos.x, pos.y + loc.y, pos.z), loc.x);
+			if (final_dis < 0)
+				return std::make_pair(INF, P3());
+			inter_p = ray.get(final_dis);
+			if (std::abs((inter_p - P3(pos.x, hit, pos.z)).len2() - sqr(loc.x)) > 1e-2)
+				return std::make_pair(INF, P3());
+			// printf("---y %f small!!!",std::abs((inter_p - P3(pos.x, inter_p.y, pos.z)).len2() - sqr(loc.x)));
+			return std::make_pair(final_dis, inter_p);
 		}
+		// printf("y big\n");
 		// check for top circle: the plane is y=pos.y + curve.height
 		// TODO
 		// check for buttom circle: the plane is y=pos.y
@@ -96,77 +122,48 @@ public:
 		// (zo-z'+zd/yd*(y-yo))^2 -> (t1+t2*y)^2
 		t1 = ray.o.z - pos.z - ray.d.z / ray.d.y * ray.o.y;
 		t2 = ray.d.z / ray.d.y;
-		a += t2 * t2;
+		a += sqr(t2);
 		b += 2 * t1 * t2;
-		c += t1 * t1;
+		c += sqr(t1);
 		// ay^2+by+c -> a'(y-b')^2+c'
 		c = c - b * b / 4 / a;
-		b = -b / 2 / a;
+		b = -b / 2 / a - pos.y;
 		// printf("%lf %lf %lf\n",a,b,c);
-		// solve sqrt(a(y(t)+pos.y-b)^2+c)=x(t)
-		// f(t) = x(t) - sqrt(a(y(t)+pos.y-b)^2+c)
-		// f'(t) = x'(t) - a(y(t)+pos.y-b)*y'(t) / sqrt(...)
-		if (c > curve.max2) // no intersect
+		if (0 <= b && b <= curve.height && c > curve.max2
+		 || (b < 0 || b > curve.height) && std::min(sqr(b), sqr(curve.height - b)) * a + c > curve.max2) // no intersect
 			return std::make_pair(INF, P3());
-		// if t is not in [0, 1] then assume f(t) is a linear function
-		P3 pt, dpt;
-		for (ld _ = 0; _ <= 1; _ += 0.2)
+		// ld pick[20] = {0, 0, 1}; int tot = 2;
+		// for (ld _ = 0; _ <= 1; _ += 0.1)
+		// {
+		// 	ld t_pick = newton2(_, a, b, c);
+		// 	if (0 <= t_pick && t_pick <= 1)
+		// 	{
+		// 		bool flag = 1;
+		// 		for (int j = 1; j <= tot; ++j)
+		// 			if (std::abs(t_pick - pick[j]) < eps)
+		// 				flag = 0;
+		// 		if (flag)
+		// 			pick[++tot] = t_pick;
+		// 	}
+		// }
+		// std::sort(pick + 1, pick + 1 + tot);
+		// for (int j = 1; j < tot; ++j)
+		// 	if (getft(pick[j], a, b, c) * getft(pick[j + 1], a, b, c) <= 0)
+		// 		check(pick[j], pick[j+1], (pick[j] + pick[j + 1]) * .5, ray, a, b, c, final_dis);
+		int ind = 0;
+		for (ld _ = 0; _ <= 0.9; _ += 0.1, ++ind)
 		{
-			ld t = _, ft, dft, x, y, dx, dy;
-			P3 loc, dir;
-			for (int i = 10; i--; )
+			// y = curve.ckpt[ind] ~ curve.ckpt[ind+1]
+			// calc min(a(y-b)^2+c)
+			// ld lower;
+			// if (curve.ckpt[ind] <= b && b <= curve.ckpt[ind + 1])
+				// lower = c;
+			// else
+				// lower = a * std::min(sqr(curve.ckpt[ind] - b), sqr(curve.ckpt[ind + 1] - b)) + c;
+			// if (lower < sqr(curve.width[ind]) + 1)
 			{
-				if (t <= 0)
-				{
-					x = curve.p0.x + t * curve.dp0.x, dx = curve.dp0.x;
-					y = pos.y + curve.p0.y + t * curve.dp0.y, dy = curve.dp0.y;
-				}
-				else if (t >= 1)
-				{
-					x = curve.p1.x + (t - 1) * curve.dp1.x, dx = curve.dp1.x;
-					y = pos.y + curve.p1.y + (t - 1) * curve.dp1.y, dy = curve.dp1.y;
-				}
-				else
-				{
-					loc = curve.getpos(t), dir = curve.getdir(t);
-					x = loc.x, dx = dir.x;
-					y = pos.y + loc.y, dy = dir.y;
-				}
-				// printf("%lf %lf %lf\n",t,x,y);
-				ld sq = sqrt(a * (y - b) * (y - b) + c);
-				ft = x - sq;
-				dft = dx - a * (y - b) * dy / sq;
-				t -= ft / dft;
-				if (std::abs(ft) < eps)
-					break;
-			}
-			if (t <= 0 || t >= 1)
-				continue;
-			loc = curve.getpos(t), dir = curve.getdir(t);
-			x = loc.x, dx = dir.x;
-			y = pos.y + loc.y, dy = dir.y;
-			ft = x - sqrt(a * (y - b) * (y - b) + c);
-			dft = dx - a * (y - b) * dy / (x - ft);
-			if (std::abs(ft) > eps)
-				continue;
-			// calc t for ray
-			dis = (y - ray.o.y) / ray.d.y;
-			if (dis < eps)
-				continue;
-			P3 inter_p = ray.get(dis);
-			if (std::abs((P3(pos.x, y, pos.z) - inter_p).len2() - x * x) > eps)
-				continue;
-			if (dis < final_dis)
-			{
-				final_dis = dis;
-				bezier_cache_t = t;
-				P3 angle_point = inter_p - P3(pos.x, y, pos.z);
-				bezier_cache_u = atan2(angle_point.z, angle_point.x); // between -pi ~ pi
-				if (bezier_cache_u < 0)
-					bezier_cache_u += 2 * PI;
-				cache_u = bezier_cache_u / 2 / PI;
-				cache_t = bezier_cache_t;
-				// printf("%lf %lf %lf %lf\n",t,inter_p.x, inter_p.y, inter_p.z);
+				check(_, _+0.1, _+.033, ray, a, b, c, final_dis);
+				check(_, _+0.1, _+.066, ray, a, b, c, final_dis);
 			}
 		}
 		if (final_dis < INF / 2)
@@ -174,13 +171,93 @@ public:
 		else
 			return std::make_pair(INF, P3());
 	}
+	bool check(ld low, ld upp, ld init, Ray ray, ld a, ld b, ld c, ld&final_dis)
+	{
+		ld t = newton(init, a, b, c, low, upp);
+		if (t <= 0 || t >= 1)
+			return false;
+		P3 loc = curve.getpos(t), dir = curve.getdir(t);
+		ld x = loc.x, dx = dir.x;
+		ld y = loc.y, dy = dir.y;
+		ld ft = x - sqrt(a * sqr(y - b) + c);
+		if (std::abs(ft) > eps)
+			return false;
+		// calc t for ray
+		ld dis = (pos.y + y - ray.o.y) / ray.d.y;
+		if (dis < eps)
+			return false;
+		P3 inter_p = ray.get(dis);
+		if (std::abs((P3(pos.x, pos.y + y, pos.z) - inter_p).len2() - x * x) > eps)
+			return false;
+		if (dis < final_dis)
+		{
+			final_dis = dis;
+			return true;
+		}
+		return false;
+	}
+	ld getft(ld t, ld a, ld b, ld c)
+	{
+		if (t < 0) t = eps;
+		if (t > 1) t = 1 - eps;
+		P3 loc = curve.getpos(t);
+		ld x = loc.x, y = loc.y;
+		return x - sqrt(a * sqr(y - b) + c);
+	}
+	ld newton(ld t, ld a, ld b, ld c, ld low=eps, ld upp=1-eps)
+	{
+		// solve sqrt(a(y(t)+pos.y-b)^2+c)=x(t)
+		// f(t) = x(t) - sqrt(a(y(t)+pos.y-b)^2+c)
+		// f'(t) = x'(t) - a(y(t)+pos.y-b)*y'(t) / sqrt(...)
+		// if t is not in [0, 1] then assume f(t) is a linear function
+		ld ft, dft, x, y, dx, dy, sq, last=-1;
+		P3 loc, dir;
+		for (int i = 20; i--; )
+		{
+			if (t < 0) t = low;
+			if (t > 1) t = upp;
+			last = t;
+			loc = curve.getpos(t), dir = curve.getdir(t);
+			x = loc.x, dx = dir.x;
+			y = loc.y, dy = dir.y;
+			// printf("%lf %lf %lf\n",t,x,y);
+			sq = sqrt(a * sqr(y - b) + c);
+			ft = x - sq;
+			dft = dx - a * (y - b) * dy / sq;
+			if (std::abs(ft) < eps)
+				return t;
+			t -= ft / dft;
+		}
+		return -1;
+	}
+	ld newton2(ld t, ld a, ld b, ld c)
+	{
+		ld dft, ddft, y, dx, dy, ddx, ddy, sq;
+		P3 loc, dir, dir2;
+		for (int i = 5; i--; )
+		{
+			if (t < 0) t = eps;
+			if (t > 1) t = 1 - eps;
+			loc = curve.getpos(t), dir = curve.getdir(t), dir2 = curve.getdir2(t);
+			y = loc.y, dx = dir.x, dy = dir.y;
+			ddx = dir2.x, ddy = dir2.y;
+			sq = sqrt(a * sqr(y - b) + c);
+			dft = dx - a * (y - b) * dy / sq;
+			ddft = ddx - a * ((y - b) * ddy + sqr(dy)) / sq + sqr(a * (y - b) * dy) / sq / sq / sq;
+			if (std::abs(dft) < eps)
+				return t;
+			t -= dft / ddft;
+		}
+		return -1;
+	}
 	virtual std::pair<P3, P3> aabb() {
 		return std::make_pair(P3(pos.x - curve.max, pos.y, pos.z - curve.max), P3(pos.x + curve.max, pos.y + curve.height, pos.z + curve.max));
 	}
 	virtual P3 norm(P3 p) {
-		P3 dir = curve.getdir(bezier_cache_t);
-		P3 d_surface = P3(cos(bezier_cache_u), dir.y / dir.x, sin(bezier_cache_u));
-		P3 d_circ = P3(-sin(bezier_cache_u), 0, cos(bezier_cache_u));
+		P3 tmp = change_for_bezier(p);
+		P3 dir = curve.getdir(tmp.y);
+		P3 d_surface = P3(cos(tmp.x), dir.y / dir.x, sin(tmp.x));
+		P3 d_circ = P3(-sin(tmp.x), 0, cos(tmp.x));
 		return d_circ.cross(d_surface).norm();
 	}
 };
@@ -262,7 +339,7 @@ public:
 	virtual std::pair<ld, P3> intersect(Ray ray) {
 		P3 ro = o - ray.o;
 		ld b = ray.d.dot(ro);
-		ld d = b * b - ro.dot(ro) + r * r;
+		ld d = sqr(b) - ro.dot(ro) + sqr(r);
 		if (d < 0) return std::make_pair(INF, P3());
 		else d = sqrt(d);
 		ld t = b - d > eps ? b - d : b + d > eps? b + d : -1;

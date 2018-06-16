@@ -31,8 +31,11 @@ P3 pt_render(Ray ray, int dep, unsigned short *X){
 	std::pair<Refl_t, P3> feature;
 	if (texture.filename == "star.png")
 		feature = texture.getcol(x.z / 15, x.x / 15);
-	else if (texture.filename == "vase.png")
-		feature = texture.getcol(obj->cache_u, obj->cache_t);
+	else if (texture.filename == "vase.png") {
+		P3 tmp = obj->change_for_bezier(x);
+		// printf("%f %f\n",tmp.x/2/PI,tmp.y);
+		feature = texture.getcol(tmp.x / 2 / PI, tmp.y);
+	}
 	else
 		feature = texture.getcol(x.z, x.x);
 	P3 f = feature.second, n = obj->norm(x), nl = n.dot(ray.d) < 0 ? into = 1, n : -n;
