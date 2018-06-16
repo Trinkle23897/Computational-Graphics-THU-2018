@@ -35,6 +35,13 @@ P3 pt_render(Ray ray, int dep, unsigned short *X){
 		P3 tmp = obj->change_for_bezier(x);
 		// printf("%f %f\n",tmp.x/2/PI,tmp.y);
 		feature = texture.getcol(tmp.x / 2 / PI, tmp.y);
+		if (erand48(X) < 0.1)
+			feature.first = SPEC;
+	}
+	else if (texture.filename == "rainbow.png") {
+		ld px = (x.x - 73) / 16.5, py = (x.y - 16.5) / 16.5;
+		feature = texture.getcol((py * cos(-0.3) + px * sin(-0.3))*.6 - .25, x.z);
+		// feature = texture.getcol(x.y / 32 + 0.25, x.z);
 	}
 	else
 		feature = texture.getcol(x.z, x.x);

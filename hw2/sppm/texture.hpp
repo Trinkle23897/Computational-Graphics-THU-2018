@@ -33,7 +33,7 @@ public:
 		if (x == 233 && y == 233 && z == 233) {
 			return std::make_pair(SPEC, P3(1, 1, 1)*.999);
 		}
-		return std::make_pair(DIFF, P3(x, y, z) / 255.);
+		return std::make_pair(refl, P3(x, y, z) / 255.);
 	}
 };
 
