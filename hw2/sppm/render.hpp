@@ -32,19 +32,19 @@ P3 pt_render(Ray ray, int dep, unsigned short *X){
 	if (texture.filename == "star.png")
 		feature = texture.getcol(x.z / 15, x.x / 15);
 	else if (texture.filename == "pure.png") {
-		feature = texture.getcol(x.y / 200, x.x / 200);
+		feature = texture.getcol(-x.y / 200, -x.x / 200);
 		if (erand48(X) < 0.2)
 			feature.first = SPEC;
 	}
 	else if (texture.filename == "pure2.png") {
-		feature = texture.getcol(x.y / 200, x.z / 200);
+		feature = texture.getcol(-x.y / 200, -x.z / 200);
 		if (erand48(X) < 0.2)
 			feature.first = SPEC;
 	}
 	else if (texture.filename == "vase.png") {
 		P3 tmp = obj->change_for_bezier(x);
 		// printf("%f %f\n",tmp.x/2/PI,tmp.y);
-		feature = texture.getcol(tmp.x / 2 / PI, tmp.y);
+		feature = texture.getcol(tmp.x / 2 / PI + .5, tmp.y);
 		if (erand48(X) < 0.2)
 			feature.first = SPEC;
 	}

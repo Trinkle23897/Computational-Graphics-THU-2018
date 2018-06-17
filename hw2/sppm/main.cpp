@@ -5,16 +5,17 @@ int main(int argc, char *argv[])
 	// Ray ray(P3(427,1000,447),P3(-1,-2,-1.5).norm());
 	// find_intersect_simple(ray);
 	int w=atoi(argv[1]), h=atoi(argv[2]), samp=atoi(argv[4])/4;
-	Ray cam(P3(150,55,260), P3(-0.45,-0.15,-1).norm());
-	P3 cx=P3(w*.35/h), cy=(cx&P3(cam.d.x, 0,cam.d.z)).norm()*.35, r, *c=new P3[w*h];
+	Ray cam(P3(150,28,260), P3(-0.45,0.001,-1).norm());
+	P3 cx=P3(w*.33/h), cy=(cx&P3(cam.d.x, 0,cam.d.z)).norm()*.33, r, *c=new P3[w*h];
+	cx *= 1.05;
 #pragma omp parallel for schedule(dynamic, 1) private(r)
 	for(int y=0;y<h;++y){
-		fprintf(stderr,"\rUsing %d spp  %5.2f%%",samp*4,100.*y/h);
+		fprintf(stderr,"\r%5.2f%%",100.*y/h);
 		for(int x=0;x<w;++x){
 			for(int sy=0;sy<2;++sy)
 				for(int sx=0;sx<2;++sx)
 				{
-					unsigned short X[3]={y+sx+time(0),y*x+sy,y*x*y+sx*sy};
+					unsigned short X[3]={y+sx,y*x+sy,y*x*y+sx*sy+time(0)};
 					r.x=r.y=r.z=0;
 					for(int s=0;s<samp;++s){
 						ld r1=2*erand48(X), dx=r1<1 ? sqrt(r1): 2-sqrt(2-r1);
