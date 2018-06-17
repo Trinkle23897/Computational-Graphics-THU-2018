@@ -45,12 +45,12 @@ Object* vase_back[] = {
 };
 
 Object* camera_left[] = {
-	new SphereObject(P3(1e5+1,50,100),   1e5, DIFF, 1.5, P3(.1,.25,.25), P3(), "pure2.png"),//Left
-	new SphereObject(P3(-1e5+299,50,100), 1e5, DIFF, 1.5, P3(.25,.75,.25)),//Right
-	new SphereObject(P3(50,50, 1e5),      1e5, DIFF, 1.5, P3(1,1,1)*.999, P3(), "pure.png"),//Back
-	new SphereObject(P3(50,50,-1e5+190),  1e5, DIFF, 1.5, P3(.25,.25,.25)),//Front
-	new SphereObject(P3(50, 1e5, 100),     1e5, DIFF, 1.5, P3(.75,.75,.75), P3(), "star.png"),//Botrom
-	new SphereObject(P3(50,-1e5+100,100), 1e5, DIFF, 1.5, P3(.75,.75,.75)),//Top
+	new SphereObject(P3(1e5+1,40.8,81.6),   1e5, DIFF, 1.5, P3(.1,.25,.25), P3(), "pure2.png"),//Left
+	new SphereObject(P3(-1e5+299,40.8,81.6), 1e5, DIFF, 1.5, P3(.25,.75,.25)),//Right
+	new SphereObject(P3(50,40.8, 1e5),      1e5, DIFF, 1.5, P3(1,1,1)*.999, P3(), "pure.png"),//Back
+	new SphereObject(P3(50,40.8,-1e5+190),  1e5, DIFF, 1.5, P3(.25,.25,.25)),//Front
+	new SphereObject(P3(50, 1e5, 81.6),     1e5, DIFF, 1.5, P3(.75,.75,.75), P3(), "star.png"),//Botrom
+	new SphereObject(P3(50,-1e5+81.6,81.6), 1e5, DIFF, 1.5, P3(.75,.75,.75)),//Top
 	// new SphereObject(P3(27,16.5,47),       16.5, SPEC, 1.5, P3(1,1,1)*.999),//Mirror
 	new   CubeObject(P3(0,8,0),    P3(30,10,30), DIFF, 1.5, P3(76/255.,34/255.,27/255.)),
 	new BezierObject(P3(15, 9.99, 15),   bezier, DIFF, 1.7, P3(1,1,1)*.999, P3(), "vase.png"),
@@ -60,7 +60,7 @@ Object* camera_left[] = {
 	new SphereObject(P3(65.5,3,88),           3, REFR, 1.7, P3(.5,1,.5)*.999),//SmallBall2
 	new SphereObject(P3(77,3,92),             3, REFR, 1.7, P3(1,1,.5)*.999),//SmallBall3
 	// new SphereObject(P3(16,60,100),          12, REFR, 1.5, P3(1,1,1)*.999),//FlyBall
-	new SphereObject(P3(50,700-.27,100), 600, DIFF, 1.5, P3(), P3(1,1,1)*13) //Lite
+	new SphereObject(P3(50,681.6-.27,81.6), 600, DIFF, 1.5, P3(), P3(1,1,1)*20) //Lite
 };
 
 Object** scene = camera_left;

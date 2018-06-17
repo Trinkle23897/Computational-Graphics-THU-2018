@@ -33,12 +33,12 @@ P3 pt_render(Ray ray, int dep, unsigned short *X){
 		feature = texture.getcol(x.z / 15, x.x / 15);
 	else if (texture.filename == "pure.png") {
 		feature = texture.getcol(-x.y / 200, -x.x / 200);
-		if (erand48(X) < 0.2)
+		if (erand48(X) < 0.2 && x.y < 50)
 			feature.first = SPEC;
 	}
 	else if (texture.filename == "pure2.png") {
 		feature = texture.getcol(-x.y / 200, -x.z / 200);
-		if (erand48(X) < 0.2)
+		if (erand48(X) < 0.2 && x.y < 50)
 			feature.first = SPEC;
 	}
 	else if (texture.filename == "vase.png") {
