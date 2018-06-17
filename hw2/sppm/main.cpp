@@ -8,6 +8,7 @@ int main(int argc, char *argv[])
 	Ray cam(P3(150,28,260), P3(-0.45,0.001,-1).norm());
 	P3 cx=P3(w*.33/h), cy=(cx&P3(cam.d.x, 0,cam.d.z)).norm()*.33, r, *c=new P3[w*h];
 	cx *= 1.05;
+	ld aperture = .6;
 #pragma omp parallel for schedule(dynamic, 1) private(r)
 	for(int y=0;y<h;++y){
 		fprintf(stderr,"\r%5.2f%%",100.*y/h);
@@ -21,7 +22,8 @@ int main(int argc, char *argv[])
 						ld r1=2*erand48(X), dx=r1<1 ? sqrt(r1): 2-sqrt(2-r1);
 						ld r2=2*erand48(X), dy=r2<1 ? sqrt(r2): 2-sqrt(2-r2);
 						P3 d=cx*((sx+dx/2+x)/w-.5)+cy*((sy+dy/2+y)/h-.5)+cam.d;
-						r+=pt_render(Ray(cam.o+d*150,d.norm()),0,X);
+						P3 pp = cam.o+d*150, loc = cam.o + (P3(erand48(X)*1.05, erand48(X)) - .5) * 2 * aperture;
+						r+=pt_render(Ray(pp	, (pp - loc).norm()),0,X);
 					}
 					c[y*w+x]+=(r/samp).clip()/4;
 				}
