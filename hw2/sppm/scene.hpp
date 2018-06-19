@@ -52,7 +52,7 @@ Object* camera_left[] = {
 	new SphereObject(P3(50, 1e5, 81.6),     1e5, DIFF, 1.5, P3(.75,.75,.75), P3(), "star.png"),//Botrom
 	new SphereObject(P3(50,-1e5+81.6,81.6), 1e5, DIFF, 1.5, P3(.75,.75,.75)),//Top
 	// new SphereObject(P3(27,16.5,47),       16.5, SPEC, 1.5, P3(1,1,1)*.999),//Mirror
-	new   CubeObject(P3(0,8,0),    P3(30,10,30), DIFF, 1.5, P3(76/255.,34/255.,27/255.)),
+	new   CubeObject(P3(0,8,0),    P3(30,10,30), DIFF, 1.5, P3(76/255.,34/255.,27/255.), P3(), "wood.jpg"),
 	new BezierObject(P3(15, 9.99, 15),   bezier, DIFF, 1.7, P3(1,1,1)*.999, P3(), "vase.png"),
 	new SphereObject(P3(73,16.5,40),       16.5, DIFF, 1.7, P3(1,1,1)*.999, P3(), "rainbow.png"),//Main Ball
 	new SphereObject(P3(45,6,45),             6, REFR, 1.7, P3(.5,.5,1)*.999),//SmallBall0

@@ -31,6 +31,9 @@ P3 pt_render(Ray ray, int dep, unsigned short *X){
 	std::pair<Refl_t, P3> feature;
 	if (texture.filename == "star.png")
 		feature = texture.getcol(x.z / 15, x.x / 15);
+	else if (texture.filename == "wood.jpg") {
+		feature = texture.getcol(x.x / 30, x.z / 30);
+	}
 	else if (texture.filename == "greenbg.jpg") {
 		feature = texture.getcol(-x.x / 125, -x.y / 80 - 0.05);
 		// if (erand48(X) < 0.2 && x.y < 50)
