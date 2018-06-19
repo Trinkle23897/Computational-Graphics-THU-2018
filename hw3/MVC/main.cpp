@@ -264,7 +264,7 @@ void getMesh(const std::vector<Point>& curve) {
 	mesher.set_criteria(Criteria(0.125, 0));
 	mesher.refine_mesh();
 	std::cout << "Done with " << adaptiveMesh->number_of_vertices() << " vertices and " << adaptiveMesh->number_of_faces() << " triangles." << std::endl;
-    int index = 0;
+	int index = 0;
 	for (FiniteFacesIterator iter = adaptiveMesh->finite_faces_begin() ; iter != adaptiveMesh->finite_faces_end() ; ++iter) {
 		Triangle triangle = adaptiveMesh->triangle(iter);
 		Point v1 = triangle.vertex(0);
@@ -273,18 +273,18 @@ void getMesh(const std::vector<Point>& curve) {
 		if (inside((P){(v1.x()+v2.x()+v3.x())/3., (v1.y()+v2.y()+v3.y())/3.}))
 			triangle_mesh.push_back(triangle);
 		// std::cout << v1.x() << " " << v1.y() << " " << v2.x() << " " << v2.y() << " " << v3.x() << " " << v3.y() << std::endl;
-        if (mapping.find(v1) == mapping.end()) {
-            mapping[v1] = index++;
-            orderedPoints.push_back(v1);
-        }
-        if (mapping.find(v2) == mapping.end()) {
-            mapping[v2] = index++;
-            orderedPoints.push_back(v2);
-        }
-        if (mapping.find(v3) == mapping.end()) {
-            mapping[v3] = index++;
-            orderedPoints.push_back(v3);
-        }
+		if (mapping.find(v1) == mapping.end()) {
+			mapping[v1] = index++;
+			orderedPoints.push_back(v1);
+		}
+		if (mapping.find(v2) == mapping.end()) {
+			mapping[v2] = index++;
+			orderedPoints.push_back(v2);
+		}
+		if (mapping.find(v3) == mapping.end()) {
+			mapping[v3] = index++;
+			orderedPoints.push_back(v3);
+		}
 	}
 }
 
