@@ -31,15 +31,15 @@ P3 pt_render(Ray ray, int dep, unsigned short *X){
 	std::pair<Refl_t, P3> feature;
 	if (texture.filename == "star.png")
 		feature = texture.getcol(x.z / 15, x.x / 15);
-	else if (texture.filename == "pure.png") {
-		feature = texture.getcol(-x.y / 200, -x.x / 200);
-		if (erand48(X) < 0.2 && x.y < 50)
-			feature.first = SPEC;
+	else if (texture.filename == "greenbg.jpg") {
+		feature = texture.getcol(-x.x / 125, -x.y / 80 - 0.05);
+		// if (erand48(X) < 0.2 && x.y < 50)
+			// feature.first = SPEC;
 	}
-	else if (texture.filename == "pure2.png") {
-		feature = texture.getcol(-x.y / 200, -x.z / 200);
-		if (erand48(X) < 0.2 && x.y < 50)
-			feature.first = SPEC;
+	else if (texture.filename == "wallls.com_156455.png") {
+		feature = texture.getcol(-x.z / 150, -x.y / 100);
+		// if (erand48(X) < 0.2 && x.y < 50)
+			// feature.first = SPEC;
 	}
 	else if (texture.filename == "vase.png") {
 		P3 tmp = obj->change_for_bezier(x);

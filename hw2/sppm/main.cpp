@@ -8,7 +8,7 @@ int main(int argc, char *argv[])
 	Ray cam(P3(150,28,260), P3(-0.45,0.001,-1).norm());
 	P3 cx=P3(w*.33/h), cy=(cx&P3(cam.d.x, 0,cam.d.z)).norm()*.33, r, *c=new P3[w*h];
 	cx *= 1.05;
-	ld aperture = .6;
+	ld aperture = .0;
 #pragma omp parallel for schedule(dynamic, 1) private(r)
 	for(int y=0;y<h;++y){
 		fprintf(stderr,"\r%5.2f%%",100.*y/h);

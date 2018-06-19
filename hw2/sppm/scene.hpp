@@ -45,9 +45,9 @@ Object* vase_back[] = {
 };
 
 Object* camera_left[] = {
-	new SphereObject(P3(1e5+1,40.8,81.6),   1e5, DIFF, 1.5, P3(.1,.25,.25), P3(), "pure2.png"),//Left
+	new SphereObject(P3(1e5+1,40.8,81.6),   1e5, DIFF, 1.5, P3(.1,.25,.25), P3(), "wallls.com_156455.png"),//Left
 	new SphereObject(P3(-1e5+299,40.8,81.6), 1e5, DIFF, 1.5, P3(.25,.75,.25)),//Right
-	new SphereObject(P3(50,40.8, 1e5),      1e5, DIFF, 1.5, P3(1,1,1)*.999, P3(), "pure.png"),//Back
+	new SphereObject(P3(50,40.8, 1e5),      1e5, DIFF, 1.5, P3(1,1,1)*.999, P3(), "greenbg.jpg"),//Back
 	new SphereObject(P3(50,40.8,-1e5+190),  1e5, DIFF, 1.5, P3(.25,.25,.25)),//Front
 	new SphereObject(P3(50, 1e5, 81.6),     1e5, DIFF, 1.5, P3(.75,.75,.75), P3(), "star.png"),//Botrom
 	new SphereObject(P3(50,-1e5+81.6,81.6), 1e5, DIFF, 1.5, P3(.75,.75,.75)),//Top
