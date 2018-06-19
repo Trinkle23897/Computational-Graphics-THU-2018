@@ -3,6 +3,72 @@
 #include "stb_image.h"
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "stb_image_write.h"
+// basic math operation
+struct P{
+	double x, y;
+#define PP register const P&
+	bool operator<(PP a)const {return x<a.x||x==a.x&&y<a.y;}
+	P operator+(PP a)const {return (P){x+a.x,y+a.y};}
+	P operator-(PP a)const {return (P){x-a.x,y-a.y};}
+	P operator*(double p){return (P){x*p,y*p};}
+	double operator&(PP a)const {return x*a.y-y*a.x;}
+	double operator|(PP a)const {return x*a.x+y*a.y;}
+	double len2() const {return x*x+y*y;}
+	void noise(double r=1e-2){x+=(rand()&1?1.:-1.)*rand()/2147483647*r;y+=(rand()&1?1.:-1.)*rand()/2147483647*r;}
+};
+namespace Gauss
+{
+double a[10][10];
+const int n=3;
+void pr(){
+	for(int i=1;i<=n;i++,puts(""))
+		for(int j=1;j<=n+1;j++)
+			printf("%lf ",a[i][j]);
+	puts("");
+}
+void solve(){
+	int i,j,k,las;double t;
+	for(i=1;i<=n;i++) {
+		for(t=0,las=j=i;j<=n;j++)
+			if(abs(a[j][i])>t)t=abs(a[j][i]),las=j;
+		if(j=las,j!=i)
+			for(k=1;k<=n+1;k++)t=a[i][k],a[i][k]=a[j][k],a[j][k]=t;
+		for(j=i+1;j<=n;j++)
+			for(t=a[j][i]/a[i][i],k=i;k<=n+1;k++)a[j][k]-=a[i][k]*t;
+	}
+	for(i=n;i>=1;i--)
+		for(a[i][n+1]/=a[i][i],j=i-1;j;j--)a[j][n+1]-=a[j][i]*a[i][n+1];
+}
+}
+struct Mat{
+	double m[3];
+	double transform(P p) {return p.x * m[0] + p.y * m[1] + m[2];}
+}fmat[4];
+void Calc_Transform_Matrix(Mat&f, P p1, P p2, P p3, double c0, double c1, double c2)
+{
+	/*
+	 *             | x |   
+	 * | a b c | * | y | = col
+	 *             | 1 |   
+	 *
+	 * solve a,b,c -> Matrix f.m
+	 */
+	using namespace Gauss;
+	// a,b,c
+	a[1][1] = p1.x, a[2][1] = p2.x, a[3][1] = p3.x;
+	a[1][2] = p1.y, a[2][2] = p2.y, a[3][2] = p3.y;
+	a[1][3] = a[2][3] = a[3][3] = 1;
+	a[1][4] = c0, a[2][4] = c1, a[3][4] = c2;
+	solve();
+	f.m[0] = a[1][4], f.m[1] = a[2][4], f.m[2] = a[3][4];
+}
+#define check(a, b, c) ((b - a) & (c - a))
+bool intri(P p, P a, P b, P c)
+{
+	double s = std::abs(check(a, b, c));
+	double s_ = std::abs(check(a, p, b)) + std::abs(check(b, p, c)) + std::abs(check(c, p, a));
+	return std::abs(s - s_) < 1e-8;
+}
 // POISSION
 int dx[] = {-1, 0, 0, 1}, dy[] = {0, -1, 1, 0};
 char str[100];
@@ -44,10 +110,10 @@ struct IMG{
 		// printf("h: %d,%d; w: %d,%d\n",h0,h1,w0,w1);
 	}
 	void write(const char* output_filename){
-		buf = new unsigned char[w * h * c];
+		unsigned char* buf_ = new unsigned char[w * h * c];
 		for (int i = 0; i < w * h * c; ++i)
-			buf[i] = img[i] < 0 ? 0 : img[i] > 255 ? 255 : img[i];
-		stbi_write_png(output_filename, w, h, c, buf, 0);
+			buf_[i] = img[i] < 0 ? 0 : img[i] > 255 ? 255 : img[i];
+		stbi_write_png(output_filename, w, h, c, buf_, 0);
 	}
 	void print(char* s)
 	{
@@ -167,8 +233,23 @@ typedef CGAL::Bbox_2 BBox2D;
 
 typedef CGAL::Delaunay_mesher_2<DelaunayTriangulation, Criteria> Mesher;
 std::map<Point, int> mapping;
+std::vector<Point> boundaryVector;
 std::vector<Point> orderedPoints;
 std::vector<Triangle> triangle_mesh;
+
+bool inside(P p) {
+	int cnt = 0;
+	P far = (P) {-100, -1000};
+	int n = boundaryVector.size();
+	for (int i = 0; i < n; ++i) {
+		P p0 = (P){boundaryVector[i].x(), boundaryVector[i].y()};
+		P p1 = (P){boundaryVector[(i+1)%n].x(), boundaryVector[(i+1)%n].y()};
+		if (check(p, p0, p1) * check(far, p0, p1) <= 0 && check(p0, p, far) * check(p1, p, far) <= 0)
+			++cnt;
+	}
+	// printf("inside %d\n",cnt);
+	return cnt & 1;
+}
 
 void getMesh(const std::vector<Point>& curve) {
 	DelaunayTriangulation* adaptiveMesh = new DelaunayTriangulation();
@@ -182,14 +263,15 @@ void getMesh(const std::vector<Point>& curve) {
 	Mesher mesher(*adaptiveMesh);
 	mesher.set_criteria(Criteria(0.125, 0));
 	mesher.refine_mesh();
-	std::cout << " Done with " << adaptiveMesh->number_of_vertices() << " vertices and " << adaptiveMesh->number_of_faces() << " triangles." << std::endl;
+	std::cout << "Done with " << adaptiveMesh->number_of_vertices() << " vertices and " << adaptiveMesh->number_of_faces() << " triangles." << std::endl;
     int index = 0;
 	for (FiniteFacesIterator iter = adaptiveMesh->finite_faces_begin() ; iter != adaptiveMesh->finite_faces_end() ; ++iter) {
 		Triangle triangle = adaptiveMesh->triangle(iter);
-		triangle_mesh.push_back(triangle);
 		Point v1 = triangle.vertex(0);
 		Point v2 = triangle.vertex(1);
 		Point v3 = triangle.vertex(2);
+		if (inside((P){(v1.x()+v2.x()+v3.x())/3., (v1.y()+v2.y()+v3.y())/3.}))
+			triangle_mesh.push_back(triangle);
 		// std::cout << v1.x() << " " << v1.y() << " " << v2.x() << " " << v2.y() << " " << v3.x() << " " << v3.y() << std::endl;
         if (mapping.find(v1) == mapping.end()) {
             mapping[v1] = index++;
@@ -206,6 +288,19 @@ void getMesh(const std::vector<Point>& curve) {
 	}
 }
 
+double getTanAngle(const Point& a_, const Point& b_, const Point& c_)
+{
+//tan(.5 * std::abs(angle))
+	P b = (P){b_.x() - a_.x(), b_.y() - a_.y()}, c = (P){c_.x() - a_.x(), c_.y() - a_.y()};
+	double bdc = (b | c);
+	double lbc = sqrt(b.len2() * c.len2());
+	return sqrt((lbc - bdc) / (bdc + lbc));
+}
+
+double getLength(const Point& a, const Point& b)
+{
+	return sqrt((a.x() - b.x()) * (a.x() - b.x()) + (a.y() - b.y()) * (a.y() - b.y()));
+}
 
 int main(int argc, char const *argv[])
 {
@@ -290,13 +385,87 @@ int main(int argc, char const *argv[])
 	printf("target size: %d*%d\n", target.h, target.w);
 	if (mvc) // MVC
 	{
-		// std::vector<std::pair<Point, unsigned> >vertex;
-		// std::vector<Point> boundaryVector;
-		// int cnt = 0;
-		// for (double t = 0; t < PI * 2; t += 0.01)
-		// 	boundaryVector.push_back(Point(cos(t)*10,sin(t)*10));
-		// getMesh(boundaryVector);
-
+		std::map<Point, int> map_boundary;
+		std::string cmd = "python edge.py "+ mask_name;
+		system(cmd.c_str());
+		FILE *fedge = fopen("edge.txt", "r");
+		int x, y, cnt = 0;
+		while (~fscanf(fedge, "%d%d", &x, &y)) {
+			boundaryVector.push_back(Point(x, y));
+			map_boundary[Point(x, y)] = cnt++;
+		}
+		// printf("%d %d\n", src.h, src.w);
+		getMesh(boundaryVector);
+		// test vertex
+		// double tot = 0;
+		// for (std::vector<Point>::const_iterator i = boundaryVector.begin(); i != boundaryVector.end(); ++i) {
+		// 	int x = int(.5+(*i).x()), y = int(.5+(*i).y());
+		// 	getpix(src, x, y, 0) = 
+		// 	getpix(src, x, y, 1) = 
+		// 	getpix(src, x, y, 2) = tot;
+		// 	tot+=.3;
+		// }
+		// src.write("test.png");
+		// calc these vertex's color
+		double bcol[cnt + 10][4], weight[cnt + 10], tg[cnt + 10], fcol[orderedPoints.size() + 10][4];
+		memset(fcol, 0, sizeof fcol);
+		for (int i = 0; i < orderedPoints.size(); ++i)
+		if (map_boundary.find(orderedPoints[i]) != map_boundary.end()) { // boundary point
+			for (int k = 0; k < channel; ++k) {
+				int s_x = int(.5 + orderedPoints[i].x()), s_y = int(.5 + orderedPoints[i].y());
+				int t_x = s_x + ph, t_y = s_y + pw;
+				fcol[mapping[orderedPoints[i]]][k] = bcol[map_boundary[orderedPoints[i]]][k] = getpix(target, t_x, t_y, k) - getpix(src, s_x, s_y, k);
+			}
+		}
+		for (int i = 0; i < orderedPoints.size(); ++i)
+		if (map_boundary.find(orderedPoints[i]) == map_boundary.end()) { // internal point
+			int index = mapping[orderedPoints[i]];
+			for (int j = 0; j < cnt; ++j)
+				tg[j] = getTanAngle(orderedPoints[i], boundaryVector[j], boundaryVector[(j + 1) % cnt]);
+			double w_sum = 0;
+			for (int j = 0; j < cnt; ++j) {
+				weight[j] = (tg[(j+cnt-1)%cnt] + tg[j]) / getLength(orderedPoints[i], boundaryVector[j]);
+				w_sum += weight[j];
+			}
+			for (int j = 0; j < cnt; ++j) {
+				double lmd = weight[j] / w_sum;
+				for(int k = 0; k < channel; ++k)
+					fcol[index][k] += lmd * bcol[j][k];
+			}
+		}
+		// for(int i = 0; i < orderedPoints.size(); ++i)
+			// printf("%lf %lf %lf\n", fcol[i][0], fcol[i][1], fcol[i][2]);
+		// for each triangular mesh, calc the inside points' color
+		for (int i = 0; i < triangle_mesh.size(); ++i)
+		{
+			Point v1 = triangle_mesh[i].vertex(0);
+			Point v2 = triangle_mesh[i].vertex(1);
+			Point v3 = triangle_mesh[i].vertex(2);
+			P p1 = (P){v1.x(), v1.y()};
+			P p2 = (P){v2.x(), v2.y()};
+			P p3 = (P){v3.x(), v3.y()};
+			double x_min = std::min(std::min(p1.x, p2.x), p3.x);
+			double x_max = std::max(std::max(p1.x, p2.x), p3.x);
+			double y_min = std::min(std::min(p1.y, p2.y), p3.y);
+			double y_max = std::max(std::max(p1.y, p2.y), p3.y);
+			// calc transform matrix
+			int index1 = mapping[v1];
+			int index2 = mapping[v2];
+			int index3 = mapping[v3];
+			for (int k = 0; k < channel; ++k)
+				Calc_Transform_Matrix(fmat[k], p1, p2, p3, fcol[index1][k], fcol[index2][k], fcol[index3][k]);
+			for (int x = std::max(0., x_min - 1); x <= x_max + 1 && x < src.h; ++x)
+				for (int y = std::max(0., y_min - 1); y <= y_max + 1 && y < src.w; ++y)
+					if (intri((P){x, y}, p1, p2, p3))
+						for (int k = 0; k < channel; ++k)
+						{
+							double c = fmat[k].transform((P){x, y}) + getpix(src, x, y, k);
+							getpix(target, x + ph, y + pw, k) = c;
+						}
+		}
+		// output
+		std::cout << "Output result in " << output_filename << std::endl;
+		target.write(output_filename.c_str());
 	}
 	else // poisson
 	{
@@ -305,7 +474,7 @@ int main(int argc, char const *argv[])
 		// src_grad.print("grad");
 		for (int i = mask.h0, h = 0; i <= mask.h1; ++i, ++h)
 			for (int j = mask.w0, w = 0; j <= mask.w1; ++j, ++w)
-				for (int k = 0; k <= channel; ++k)
+				for (int k = 0; k < channel; ++k)
 					if (getpix(mask, i, j, 0)>200)
 						getbuf(src_grad, h, w, k) = 255,
 						getpix(src_grad, h, w, k) = getpix(src, i, j, k) * 4
