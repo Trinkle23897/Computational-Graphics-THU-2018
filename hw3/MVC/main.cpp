@@ -324,7 +324,8 @@ int main(int argc, char const *argv[])
 		puts("    -r ITER                resume iteration from ITERth png file");
 		puts("");
 		puts("Example:");
-		puts("    ./main -a Poisson -s test1_src.jpg -t test1_target.jpg -m test1_mask.jpg -o test1_result.png -p 100 -b 10 -i 5000 -h 50 -w 100");
+		puts("    ./main -a Poisson -s img/src0.jpg -t img/target0.jpg -m img/mask0.png -o result_poisson.png -p 100 -b 10 -i 5000 -h 350 -w 400");
+		puts("    ./main -s img/src0.jpg -t img/target0.jpg -m img/mask0.png -h 318 -w 370 -o result_MVC.png");
 		return 0;
 	}
 	for (int i = 1; i < argc; ++i)
