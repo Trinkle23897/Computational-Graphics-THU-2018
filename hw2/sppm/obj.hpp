@@ -65,7 +65,7 @@ public:
 	virtual std::pair<ld, P3> intersect(Ray ray) {
 		ld final_dis = INF;
 		// check for |dy|<eps
-		if (std::abs(ray.d.y) < 1e-3)
+		if (std::abs(ray.d.y) < 5e-4)
 		{
 			ld dis_to_axis = (P3(pos.x, ray.o.y, pos.z) - ray.o).len();
 			ld hit = ray.get(dis_to_axis).y;
