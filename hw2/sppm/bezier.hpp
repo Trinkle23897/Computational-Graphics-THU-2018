@@ -7,12 +7,14 @@
 class BezierCurve2D
 {// f(y)=x, y goes up?
 public:
-	ld *dx, *dy, max, height, max2, width[20], ckpt[20];
+	ld *dx, *dy, max, height, max2, r, num;
 	int n;
-	P3 p0, p1, dp0, dp1, ddp0, ddp1;
+	struct D{
+		ld t0, t1, width, y0, y1, width2;
+	}data[20];
 	// x(t) = \sum_{i=0}^n dx_i * t^i
 	// y(t) = \sum_{i=0}^n dy_i * t^i
-	BezierCurve2D(ld* px, ld* py, int n_): n(n_) {
+	BezierCurve2D(ld* px, ld* py, int n_, int num_, ld r_): num(num_), n(n_), r(r_) {
 		dx = new ld[n];
 		dy = new ld[n];
 		assert(std::abs(py[0]) <= 1e-6);
@@ -35,33 +37,30 @@ public:
 			dx[i] = dx[i] * n_down / fac;
 			dy[i] = dy[i] * n_down / fac;
 			n_down *= nxt;
-			// printf("i=%d %.0f %.0f\n",i,dx[i],dy[i]);
 		}
 		max = 0;
-		for (ld t = 0; t <= 1; t += 0.0001)
+		ld interval = 1. / (num - 1), c = 0;
+		for (int cnt = 0; cnt <= num; c += interval, ++cnt)
 		{
-			P3 pos = getpos(t);
-			if (max < pos.x)
-				max = pos.x;
-		}
-		for(int i = 0; i <= 10; ++i)
-		{
-			ckpt[i] = getpos(i * .1).y;
-			width[i] = 0;
-			P3 pos;
-			for (ld t = std::max(i * .1 - 0.01, 0.); t <= i * .1 + 1.01 && t <= 1; t += 0.0001)
+			data[cnt].width = 0;
+			data[cnt].t0 = std::max(0., c - r);
+			data[cnt].t1 = std::min(1., c + r);
+			data[cnt].y0 = getpos(data[cnt].t0).y;
+			data[cnt].y1 = getpos(data[cnt].t1).y;
+			for (ld t = data[cnt].t0; t <= data[cnt].t1; t += 0.00001)
 			{
-				pos = getpos(t);
-				if (width[i] < pos.x)
-					width[i] = pos.x + eps;
+				P3 pos = getpos(t);
+				if (data[cnt].width < pos.x)
+					data[cnt].width = pos.x;
 			}
+			if (max < data[cnt].width)
+				max = data[cnt].width;
+			data[cnt].width += eps;
+			data[cnt].width2 = sqr(data[cnt].width);
 		}
 		max += eps;
 		max2 = max * max;
-		p0 = getpos(0), p1 = getpos(1);
-		height = p1.y;
-		dp0 = getdir(eps), dp1 = getdir(1 - eps);
-		ddp0 = getdir2(eps), ddp1 = getdir2(1 - eps);
+		height = getpos(1).y;
 	}
 	P3 getpos(ld t)
 	{

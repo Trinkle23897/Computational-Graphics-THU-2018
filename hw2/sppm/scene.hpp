@@ -8,7 +8,7 @@ const ld bezier_div_x = 3;
 const ld bezier_div_y = 2.5;
 ld control_x[] = {20./bezier_div_x,27./bezier_div_x,30./bezier_div_x,30./bezier_div_x,30./bezier_div_x,25./bezier_div_x,20./bezier_div_x,15./bezier_div_x,30./bezier_div_x};
 ld control_y[] = {0./bezier_div_y,0./bezier_div_y,10./bezier_div_y,20./bezier_div_y,30./bezier_div_y,40./bezier_div_y,60./bezier_div_y,70./bezier_div_y,80./bezier_div_y};
-BezierCurve2D bezier(control_x, control_y, 9);
+BezierCurve2D bezier(control_x, control_y, 9, 9, .365);
 
 Object* vase_front[] = {
 	new SphereObject(P3(1e5+1,40.8,81.6),   1e5, DIFF, 1.5, P3(.1,.25,.25)),//Left

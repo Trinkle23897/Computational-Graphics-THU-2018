@@ -7,6 +7,8 @@
 
 // enum Refl_t { DIFF, SPEC, REFR };
 
+unsigned short mess[3]={1, 2, 3};
+
 class Object {
 public:
 	Texture texture;
@@ -31,7 +33,7 @@ public:
 	BezierObject(P3 pos_, BezierCurve2D c_, Refl_t refl, ld brdf = 1.5, P3 color = P3(), P3 emission = P3(), std::string tname = ""):
 		pos(pos_), curve(c_), Object(refl, color, emission, brdf, tname) {}
 	ld solve_t(ld yc) { // solve y(t)=yc
-		assert(0 <= yc && yc <= curve.height);
+		// assert(0 <= yc && yc <= curve.height);
 		ld t = .5, ft, dft;
 		for (int i = 10; i--; )
 		{
@@ -150,20 +152,26 @@ public:
 		// for (int j = 1; j < tot; ++j)
 		// 	if (getft(pick[j], a, b, c) * getft(pick[j + 1], a, b, c) <= 0)
 		// 		check(pick[j], pick[j+1], (pick[j] + pick[j + 1]) * .5, ray, a, b, c, final_dis);
-		int ind = 0;
-		for (ld _ = 0; _ <= 0.9; _ += 0.1, ++ind)
+		for(int ind = 0; ind <= curve.num; ++ind)
 		{
 			// y = curve.ckpt[ind] ~ curve.ckpt[ind+1]
 			// calc min(a(y-b)^2+c)
-			// ld lower;
-			// if (curve.ckpt[ind] <= b && b <= curve.ckpt[ind + 1])
-				// lower = c;
-			// else
-				// lower = a * std::min(sqr(curve.ckpt[ind] - b), sqr(curve.ckpt[ind + 1] - b)) + c;
-			// if (lower < sqr(curve.width[ind]) + 1)
+			ld lower;
+			if (curve.data[ind].y0 <= b && b <= curve.data[ind].y1)
+				lower = c;
+			else
+				lower = a * std::min(sqr(curve.data[ind].y0 - b), sqr(curve.data[ind].y1 - b)) + c;
+			ld t0 = curve.data[ind].t0, t1 = curve.data[ind].t1;
+			if (t0 > eps) t0 += erand48(mess) * .01;
+			if (t1 < 1 - eps) t1 -= erand48(mess) * .01;
+			if (lower <= curve.data[ind].width2)
 			{
-				check(_, _+0.1, _+.033, ray, a, b, c, final_dis);
-				check(_, _+0.1, _+.066, ray, a, b, c, final_dis);
+				// check(_, _+0.1, _+eps, ray, a, b, c, final_dis);
+				check(t0, t1, (t0 + t1 + t0) / 3, ray, a, b, c, final_dis);
+				// check(t0, t1, (t0 + t1) / 2, ray, a, b, c, final_dis);
+				check(t0, t1, (t1 + t0 + t1) / 3, ray, a, b, c, final_dis);
+				// check(_, _+0.1, _+.066, ray, a, b, c, final_dis);
+				// check(_, _+0.1, _+.1-eps, ray, a, b, c, final_dis);
 			}
 		}
 		if (final_dis < INF / 2)
@@ -176,9 +184,8 @@ public:
 		ld t = newton(init, a, b, c, low, upp);
 		if (t <= 0 || t >= 1)
 			return false;
-		P3 loc = curve.getpos(t), dir = curve.getdir(t);
-		ld x = loc.x, dx = dir.x;
-		ld y = loc.y, dy = dir.y;
+		P3 loc = curve.getpos(t);
+		ld x = loc.x, y = loc.y;
 		ld ft = x - sqrt(a * sqr(y - b) + c);
 		if (std::abs(ft) > eps)
 			return false;
@@ -192,6 +199,7 @@ public:
 		if (dis < final_dis)
 		{
 			final_dis = dis;
+			// printf("%lf %lf %lf %lf\n",t,x , sqrt(a * sqr(y - b) + c), x - sqrt(a * sqr(y - b) + c));
 			return true;
 		}
 		return false;
@@ -210,13 +218,12 @@ public:
 		// f(t) = x(t) - sqrt(a(y(t)+pos.y-b)^2+c)
 		// f'(t) = x'(t) - a(y(t)+pos.y-b)*y'(t) / sqrt(...)
 		// if t is not in [0, 1] then assume f(t) is a linear function
-		ld ft, dft, x, y, dx, dy, sq, last=-1;
+		ld ft, dft, x, y, dx, dy, sq;
 		P3 loc, dir;
-		for (int i = 20; i--; )
+		for (int i = 10; i--; )
 		{
-			if (t < 0) t = low;
-			if (t > 1) t = upp;
-			last = t;
+			if (t < low) t = low;
+			if (t > upp) t = upp;
 			loc = curve.getpos(t), dir = curve.getdir(t);
 			x = loc.x, dx = dir.x;
 			y = loc.y, dy = dir.y;
