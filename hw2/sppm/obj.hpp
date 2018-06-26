@@ -156,22 +156,18 @@ public:
 		{
 			// y = curve.ckpt[ind] ~ curve.ckpt[ind+1]
 			// calc min(a(y-b)^2+c)
-			ld lower;
-			if (curve.data[ind].y0 <= b && b <= curve.data[ind].y1)
-				lower = c;
-			else
-				lower = a * std::min(sqr(curve.data[ind].y0 - b), sqr(curve.data[ind].y1 - b)) + c;
+			// ld lower;
+			// if (curve.data[ind].y0 <= b && b <= curve.data[ind].y1)
+			// 	lower = c;
+			// else
+			// 	lower = a * std::min(sqr(curve.data[ind].y0 - b), sqr(curve.data[ind].y1 - b)) + c;
 			ld t0 = curve.data[ind].t0, t1 = curve.data[ind].t1;
-			if (t0 > eps) t0 += erand48(mess) * .01;
-			if (t1 < 1 - eps) t1 -= erand48(mess) * .01;
-			if (lower <= curve.data[ind].width2)
+			// if (t0 > eps) t0 += erand48(mess) * .01;
+			// if (t1 < 1 - eps) t1 -= erand48(mess) * .01;
+			// if (lower <= curve.data[ind].width2)
 			{
-				// check(_, _+0.1, _+eps, ray, a, b, c, final_dis);
 				check(t0, t1, (t0 + t1 + t0) / 3, ray, a, b, c, final_dis);
-				// check(t0, t1, (t0 + t1) / 2, ray, a, b, c, final_dis);
 				check(t0, t1, (t1 + t0 + t1) / 3, ray, a, b, c, final_dis);
-				// check(_, _+0.1, _+.066, ray, a, b, c, final_dis);
-				// check(_, _+0.1, _+.1-eps, ray, a, b, c, final_dis);
 			}
 		}
 		if (final_dis < INF / 2)
@@ -222,8 +218,8 @@ public:
 		P3 loc, dir;
 		for (int i = 10; i--; )
 		{
-			if (t < low) t = low;
-			if (t > upp) t = upp;
+			if (t < 0) t = low;
+			if (t > 1) t = upp;
 			loc = curve.getpos(t), dir = curve.getdir(t);
 			x = loc.x, dx = dir.x;
 			y = loc.y, dy = dir.y;

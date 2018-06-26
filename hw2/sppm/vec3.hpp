@@ -24,6 +24,8 @@ struct P3{
 	ld operator|(const P3&a) const {return x*a.x + y*a.y + z*a.z;}
 	ld dot(const P3&a) const {return x*a.x + y*a.y + z*a.z;}
 	ld max() const {return x>y&&x>z?x:y>z?y:z;}
+	P3 max(const P3&a) const {return P3(std::max(x,a.x), std::max(y,a.y), std::max(z,a.z));}
+	P3 min(const P3&a) const {return P3(std::min(x,a.x), std::min(y,a.y), std::min(z,a.z));}
 	ld len() const {return sqrt(x*x + y*y + z*z);}
 	ld len2() const {return x*x + y*y + z*z;}
 	P3 mult(const P3&a) const {return P3(x*a.x, y*a.y, z*a.z);}

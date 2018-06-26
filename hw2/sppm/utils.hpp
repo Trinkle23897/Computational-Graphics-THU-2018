@@ -2,6 +2,7 @@
 #define __UTILS_H__
 
 #include <bits/stdc++.h>
+#include <omp.h>
 
 #ifndef STB_IMAGE_IMPLEMENTATION
 #define STB_IMAGE_IMPLEMENTATION
