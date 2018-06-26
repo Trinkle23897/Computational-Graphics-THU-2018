@@ -43,7 +43,7 @@ P3 pt_render(Ray ray, int dep, unsigned short *X) {
 		return f.mult(pt_render(Ray(x, d), dep, X));
 	}
 	else {
-		Ray reflray = Ray(x, ray.d.reflect(n));
+		Ray reflray = Ray(x, ray.d.reflect(nl));
 		if (feature.first == SPEC) {
 			return f.mult(pt_render(reflray, dep, X));
 		}
@@ -62,7 +62,7 @@ P3 pt_render(Ray ray, int dep, unsigned short *X) {
 	}
 }
 
-std::vector<SPPMnode> sppm_backtrace(Ray ray, int dep, int index, unsigned short* X, P3 pref = P3(1, 1, 1)) {
+std::vector<SPPMnode> sppm_backtrace(Ray ray, int dep, int index, unsigned short* X, int debug = 0, P3 pref = P3(1, 1, 1)) {
 // if index == -1 then the node is illegal
 	std::vector<SPPMnode> result, tmp;
 	if (pref.max() < eps) return result;
@@ -76,33 +76,33 @@ std::vector<SPPMnode> sppm_backtrace(Ray ray, int dep, int index, unsigned short
 	std::pair<Refl_t, P3> feature = get_feature(obj, texture, x, X);
 	P3 f = feature.second, n = obj->norm(x), nl = n.dot(ray.d) < 0 ? into = 1, n : -n;
 	ld p = f.max();
+	if (debug)
+		printf("dep = %d\tf = (%.5f, %.5f, %.5f) %s col = (%.5f %.5f %.5f) hit = (%.5f %.5f %.5f)\n", dep, pref.x, pref.y, pref.z, 
+			feature.first == REFR ? "REFR" : feature.first == DIFF ? "DIFF" : "SPEC", f.x, f.y, f.z, x.x, x.y, x.z);
 	if (f.max() < eps)
 		return result;
 	if (++dep > 5)
 		if(erand48(X) < p) f /= p;
 		else return result;
-	Ray reflray = Ray(x, ray.d.reflect(n));
+	Ray reflray = Ray(x, ray.d.reflect(nl));
 	if (feature.first == DIFF || texture.filename == "vase.png") { // vase: 0.8 prob
-		result.push_back(SPPMnode(x, pref.mult(f) * (texture.filename == "vase.png" ? 0.8 : 1), nl, index));
+		result.push_back(SPPMnode(x, pref.mult(f) * (texture.filename == "vase.png" ? .8 : 1), nl, index));
 	}
 	if (feature.first == SPEC || texture.filename == "vase.png") { // vase: 0.2 prob
-		tmp = sppm_backtrace(reflray, dep, index, X, pref.mult(f));
-		if (texture.filename == "vase.png")
-			for (int i = 0; i < tmp.size(); ++i)
-				tmp[i].col *= .2;
+		tmp = sppm_backtrace(reflray, dep, index, X, debug, pref.mult(f) * (texture.filename == "vase.png" ? .2 : 1.));
 		result.insert(result.end(), tmp.begin(), tmp.end());
 	}
 	if (feature.first == REFR) {
 		P3 d = ray.d.refract(n, into ? 1 : texture.brdf, into ? texture.brdf : 1);
 		if (d.len2() < eps) // Total internal reflection
-			return sppm_backtrace(reflray, dep, index, X, pref.mult(f));
+			return sppm_backtrace(reflray, dep, index, X, debug, pref.mult(f));
 		ld a = texture.brdf - 1, b = texture.brdf + 1;
 		ld R0 = a * a / (b * b), c = 1 - (into ? -ray.d.dot(nl) : d.dot(n));
 		ld Re = R0 + (1 - R0) * c * c  * c * c * c, Tr = 1 - Re;
 		ld P = .25 + .5 * Re, RP = Re / P, TP = Tr / (1 - P);
-		tmp = sppm_backtrace(reflray, dep, index, X, pref.mult(f) * Re);
+		tmp = sppm_backtrace(reflray, dep, index, X, debug, pref.mult(f) * Re);
 		result.insert(result.end(), tmp.begin(), tmp.end());
-		tmp = sppm_backtrace(Ray(x, d), dep, index, X, pref.mult(f) * Tr);
+		tmp = sppm_backtrace(Ray(x, d), dep, index, X, debug, pref.mult(f) * Tr);
 		result.insert(result.end(), tmp.begin(), tmp.end());
 	}
 	return result;
@@ -134,7 +134,7 @@ void sppm_forward(Ray ray, int dep, P3 col, unsigned short *X, ld rad2, IMGbuf* 
 		return sppm_forward(Ray(x, d), dep, col.mult(f), X, rad2, c, kdt);
 	}
 	else {
-		Ray reflray = Ray(x, ray.d.reflect(n));
+		Ray reflray = Ray(x, ray.d.reflect(nl));
 		if (feature.first == SPEC) {
 			if (texture.filename == "vase.png")
 				kdt->query(SPPMnode(x, col, nl), rad2, c); // query col

@@ -15,7 +15,7 @@ struct SPPMnode {
 
 struct IMGbuf {
 	ld n; P3 f;
-	IMGbuf(): n(0) {}
+	IMGbuf(): n(0), f(0,0,0) {}
 	void add(P3 c, ld p = 1.) { n += p, f += c; }
 	P3 getcol() { return f / n; }
 };
@@ -55,10 +55,8 @@ public:
 		if (o < r) tree[o].s[1] = bt(o + 1, r, d == 2 ? 0 : d + 1), mt(o, tree[o].s[1]);
 		return o;
 	}
-	void build(std::vector<SPPMnode>& node) { // multi-thread forbid !!!
+	KDTree(std::vector<SPPMnode>& node) { // multi-thread forbid !!!
 		n = node.size();
-		if (tree != NULL)
-			delete[] tree;
 		tree = new KDTreeNode[n + 10];
 		for (int i = 0; i < n; ++i)
 			tree[i + 1].sppm = node[i];
@@ -81,5 +79,7 @@ public:
 		_query(node, rad2, c, root);
 	}
 };
+
+int KDTree::D = 0;
 
 #endif // __KDTREE_H__
