@@ -22,6 +22,7 @@ struct IMGbuf {
 	void reset() { n = 0; f.x = f.y = f.z = 0; }
 	IMGbuf operator+(const IMGbuf& a) const {return IMGbuf(n + a.n, f + a.f);}
 	IMGbuf operator*(ld p) const {return IMGbuf(n * p, f * p);}
+	IMGbuf operator/(ld p) const {return IMGbuf(n / p, f / p);}
 	IMGbuf& operator+=(const IMGbuf& a) {return *this = *this + a;}
 	P3 get() { return n < eps ? f : f / n; }
 };
@@ -63,7 +64,11 @@ public:
 		return o;
 	}
 	KDTree(std::vector<SPPMnode>& node) { // multi-thread forbid !!!
+		init(node);
+	}
+	void init(std::vector<SPPMnode>& node) { // multi-thread forbid !!!
 		n = node.size();
+		if (tree != NULL) delete[] tree;
 		tree = new KDTreeNode[n + 10];
 		for (int i = 0; i < n; ++i) {
 			tree[i + 1].sppm = node[i];
@@ -75,7 +80,7 @@ public:
 	}
 	void _query(const SPPMnode&node, IMGbuf* c, int o) {
 		if ((tree[o].sppm.pos - node.pos).len2() <= sqr(tree[o].sppm.r) && tree[o].sppm.dir.dot(node.dir) >= 0)
-			c[tree[o].sppm.index].add(node.col, node.prob);
+			c[tree[o].sppm.index].add(node.col.mult(tree[o].sppm.col), node.prob);
 		ld d[2];
 		if (tree[o].s[0] > 0) d[0] = getdis2(node.pos, tree[tree[o].s[0]].m[0], tree[tree[o].s[0]].m[1]); else d[0] = INF;
 		if (tree[o].s[1] > 0) d[1] = getdis2(node.pos, tree[tree[o].s[1]].m[0], tree[tree[o].s[1]].m[1]); else d[1] = INF;
