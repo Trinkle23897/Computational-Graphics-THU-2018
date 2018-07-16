@@ -43,9 +43,11 @@ OpenMP: 2, GPU: 5
 其他额外效果: 凹凸贴图、体积光等: [5, ?]
 ```
 
+代码基于smallpt，添加了纹理映射、旋转Bezier求交、景深的效果，详情可查阅 hw2/report/report.pdf
+
 ### Result
 
-
+![](hw2/report/wallpaper/nomosaic_16k.png)
 
 ## HW3
 
@@ -55,7 +57,8 @@ OpenMP: 2, GPU: 5
 2. 内容敏感的图像缩放 Seam Carving for Content-Aware Image Resizing, SIGGRAPH 2007.
 3. 无缝图像拼接 Coordinates for Instant Image Cloning, SIGGRAPH 2009.
 
-此处选了第三个
+此处选了第三个，实现了
 
 ### Result
 
+![](hw3/MVC/pic/2_6.png)
