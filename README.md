@@ -57,7 +57,7 @@ OpenMP: 2, GPU: 5
 2. 内容敏感的图像缩放 Seam Carving for Content-Aware Image Resizing, SIGGRAPH 2007.
 3. 无缝图像拼接 Coordinates for Instant Image Cloning, SIGGRAPH 2009.
 
-此处选了第三个，实现了
+此处选了第三个选题，实现了MVC和Poisson Image Editing两种算法
 
 ### Result
 
