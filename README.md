@@ -45,6 +45,22 @@ OpenMP: 2, GPU: 5
 
 代码基于smallpt，添加了纹理映射、旋转Bezier求交、景深的效果，详情可查阅 hw2/report/report.pdf
 
+### Compile & Run
+
+```
+cd sppm
+g++ main.cpp -oa -O3 -fopenmp
+```
+
+由于sppm代码里面还有bug，就先没调用……实际上里面是pt的接口，当然可以直接把main函数的baseline改成sppm，不过相应的参数也要跟着改了。
+
+```
+./a 640 480 try.ppm 10
+./a 3840 2160 test.ppm 100000
+```
+
+欢迎pr！
+
 ### Result
 
 ![](hw2/report/wallpaper/nomosaic_16k.png)

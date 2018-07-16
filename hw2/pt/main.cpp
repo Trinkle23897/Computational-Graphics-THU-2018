@@ -1,4 +1,4 @@
-#include "../lib/utils.hpp"
+#include "utils.hpp"
 
 #define eps 1e-6
 #define mcol 255
