@@ -63,7 +63,7 @@ g++ main.cpp -oa -O3 -fopenmp
 
 ### Result
 
-![](hw2/report/wallpaper/nomosaic_16k.png)
+![](hw2/report/wallpaper/small.png)
 
 ## HW3
 
