@@ -14,7 +14,8 @@
 
 ### Result
 
-![](hw1/pic/4.png)
+图太丑了而且这个作业也很trivial就不放图了
+<!--![](hw1/pic/4.png)-->
 
 ## HW2
 
