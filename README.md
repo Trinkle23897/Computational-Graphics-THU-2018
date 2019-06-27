@@ -84,11 +84,11 @@ g++ main.cpp -oa -O3 -fopenmp
 
 ### MashPlant
 
-![](result_MashPlant/finalr.png)
+![](result_MashPlant/finalr.jpg)
 
-![](result_MashPlant/finalb.png)
+![](result_MashPlant/finalb.jpg)
 
-![](result_MashPlant/heart_water.png)
+![](result_MashPlant/heart_water.jpg)
 
 带色散的心还不够完善，等我找个时间再跑个好一点的。
 
