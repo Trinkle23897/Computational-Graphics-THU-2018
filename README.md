@@ -82,6 +82,16 @@ g++ main.cpp -oa -O3 -fopenmp
 
 ## Other Result
 
+### MashPlant
+
+![](result_MashPlant/finalr.png)
+
+![](result_MashPlant/finalb.png)
+
+![](result_MashPlant/heart_water.png)
+
+带色散的心还不够完善，等我找个时间再跑个好一点的。
+
 ## LICENSE
 
 本项目基于Graphics A+ LICENSE，属于MIT LICENSE的一个延伸。
