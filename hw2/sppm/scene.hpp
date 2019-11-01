@@ -17,10 +17,9 @@ Object* vase_front[] = {
 	new SphereObject(P3(50,40.8,-1e5+190),  1e5, DIFF, 1.5, P3(.25,.25,.25)),//Front
 	new SphereObject(P3(50, 1e5, 81.6),     1e5, DIFF, 1.5, P3(.75,.75,.75), P3(), "star.png"),//Bottom
 	new SphereObject(P3(50,-1e5+81.6,81.6), 1e5, DIFF, 1.5, P3(.75,.75,.75)),//Top 
-	new SphereObject(P3(40,16.5,47),       16.5, SPEC, 1.5, P3(1,1,1)*.999),//Mirror
-	new CubeObject(P3(0,8,84),    P3(34,10,116), DIFF, 1.5, P3(76/255.,34/255.,27/255.)),
+	new SphereObject(P3(40,16.5,47),       16.5, REFR, 1.5, P3(1,1,1)*.999, P3(), "w1.png"),//Mirror
 	new BezierObject(P3(20, 9.99, 100),  bezier, DIFF, 1.5, P3(1,1,1)*.999, P3(), "vase.png"),
-	new SphereObject(P3(73,16.5,78),       16.5, REFR, 1.5, P3(1,1,1)*.999),//Glas 
+	new SphereObject(P3(73,16.5,78),       16.5, REFR, 1.5, P3(1,1,1)*.999, P3(), "w0.png"),//Glas 
 	// new SphereObject(P3(20,60,100),        16.5, SPEC, 1.5, P3(1,1,1)*.999),//RedBall
 	new SphereObject(P3(50,681.6-.27,81.6), 600, DIFF, 1.5, P3(), P3(12,12,12)) //Lite 
 };
@@ -62,9 +61,24 @@ Object* camera_left[] = {
 	// new SphereObject(P3(16,60,100),          12, REFR, 1.5, P3(1,1,1)*.999),//FlyBall
 	new SphereObject(P3(50,681.6-.27,81.6), 600, DIFF, 1.5, P3(), P3(1,1,1)*20) //Lite
 };
+const ld light = 9;
+Object* fancy[] = {
+	new CubeObject(P3(-300, -100, -300), P3(200, 300, 150), DIFF, 1.5, P3(1, 1, 1) * .9, P3(), "230.png"),
+	new SphereObject(P3(96, 300-6, 37), 6, REFR, 1.5, P3(1,1,1) * .999, P3(1,1,1)*0, "w0.png"),
+	new SphereObject(P3(31, 300-8, 47), 8, REFR, 1.5, P3(1,1,1) * .999, P3(1,1,1)*0, "w1.png"),
+	new SphereObject(P3(85, 300-3, 37), 3, REFR, 1.5, P3(1,1,1) * .999, P3(1,1,1)*0, "w2.png"),
+	new	SphereObject(P3(21, 300-11, 07), 11, REFR, 1.5, P3(1,1,1) * .999, P3(1,1,1)*0, "w3.png"),
+	new	SphereObject(P3(56, 300-16, 61), 16, REFR, 1.5, P3(1,1,1) * .999, P3(1,1,1)*0, "w4.png"),
+	new SphereObject(P3(96, 300-6, 37), 6-0.01, DIFF, 1.5, P3(), P3(1,1,1)*light),
+	new SphereObject(P3(31, 300-8, 47), 8-0.01, DIFF, 1.5, P3(), P3(1,1,1)*light),
+	new SphereObject(P3(85, 300-3, 37), 3-0.01, DIFF, 1.5, P3(), P3(1,1,1)*light),
+	new	SphereObject(P3(21, 300-11, 07), 11-0.01, DIFF, 1.5, P3(), P3(1,1,1)*light),
+	new	SphereObject(P3(56, 300-16, 61), 16-0.01, DIFF, 1.5, P3(), P3(1,1,1)*light),
+	new	SphereObject(P3(10, 300-23, 70), 23, REFR, 1.5, P3(1,1,1)*.999),
+};
 
-Object** scene = camera_left;
-int scene_num = 14;
+Object** scene = fancy;//vase_front;
+int scene_num = 12;
 
 std::pair<Refl_t, P3> get_feature(Object* obj, Texture&texture, P3 x, unsigned short *X) {
 	std::pair<Refl_t, P3> feature;
@@ -97,6 +111,33 @@ std::pair<Refl_t, P3> get_feature(Object* obj, Texture&texture, P3 x, unsigned s
 		ld px = (x.x - 73) / 16.5, py = (x.y - 16.5) / 16.5;
 		feature = texture.getcol((py * cos(-0.3) + px * sin(-0.3))*.6 - .25, x.z);
 		// feature = texture.getcol(x.y / 32 + 0.25, x.z);
+	}
+	else if (texture.filename == "w0.png" || texture.filename == "w1.png" || texture.filename == "w2.png"
+		|| texture.filename == "w3.png" || texture.filename == "w4.png") {
+		SphereObject* o = (SphereObject*)obj;
+		P3 v = (x - o->o) / o->r, v0;
+		int type = texture.filename[1] - '0';
+		if (type == 0) v0 = (P3) {-0.79370194, -0.94928056, -0.54563412};
+		else if (type == 1) v0 = (P3) {0.80076862, -0.46119098,  0.097985};
+		else if (type == 2) v0 = (P3) {0.60936399,  0.61811709, -0.7216741};
+		else if (type == 3) v0 = (P3) {0.20347676,  -0.98533796, -0.60770924};
+		else if (type == 4) v0 = (P3) {-0.37134236, -0.62023902, 0.41387378};
+		v0 /= v0.len();
+		ld dotp = v | v0;
+		feature = texture.getcol(0., dotp * .5 + .5);
+		if (feature.second == P3()) {
+			feature.first = SPEC;
+			if (erand48(X) < 0.2)
+				feature.first = DIFF;
+			feature.second += 0.007;
+		}
+		else if (erand48(X) < 0.2)
+			feature.first = SPEC;
+	}
+	else if (texture.filename == "230.png") {
+		feature = texture.getcol(x.x, x.y);
+		if (erand48(X) < 0.01)
+			feature.first = SPEC;
 	}
 	else
 		feature = texture.getcol(x.z, x.x);

@@ -4,13 +4,17 @@ int baseline(int argc, char *argv[])
 {
 	// Ray ray(P3(427,1000,447),P3(-1,-2,-1.5).norm());
 	// find_intersect_simple(ray);
-	int w = atoi(argv[1]), h = atoi(argv[2]), samp = atoi(argv[4]);
-	Ray cam(P3(150, 28, 260), P3(-0.45, 0.001, -1).norm());
+	int w = atoi(argv[1]), h = atoi(argv[2]), samp = atoi(argv[4]), begin = argc >= 7 ? atoi(argv[5]) : 0, end = argc >= 7 ? atoi(argv[6]) : h;
+	Ray cam(P3(55, 230, -220), P3(0, 0.2, 1).norm());
 	P3 cx = P3(w * .33 / h), cy=(cx & P3(cam.d.x, 0, cam.d.z)).norm() * .33, r, *c = new P3[w * h];
-	cx *= 1.05;
+	// cx *= 1.05;
 	ld aperture = .0;
+	if (argc == 6)
+		omp_set_num_threads(atoi(argv[5]));
+	else if (argc == 8)
+		omp_set_num_threads(atoi(argv[7]));
 #pragma omp parallel for schedule(dynamic, 1) private(r)
-	for (int y = 0; y < h; ++y) {
+	for (int y = begin; y < end; ++y) {
 		fprintf(stderr, "\r%5.2f%%", 100. * y / h);
 		for (int x = 0; x < w; ++x) {
 			for (int sy = 0; sy < 2; ++sy)
@@ -22,7 +26,7 @@ int baseline(int argc, char *argv[])
 						ld r1 = 2 * erand48(X), dx = r1 < 1 ? sqrt(r1): 2-sqrt(2-r1);
 						ld r2 = 2 * erand48(X), dy = r2 < 1 ? sqrt(r2): 2-sqrt(2-r2);
 						P3 d = cx * ((sx + dx / 2 + x) / w - .5) + cy * ((sy + dy / 2 + y) / h - .5) + cam.d;
-						P3 pp = cam.o + d * 150, loc = cam.o + (P3(erand48(X) * 1.05, erand48(X)) - .5) * 2 * aperture;
+						P3 pp = cam.o + d * 100, loc = cam.o + (P3(erand48(X) * 1.05, erand48(X)) - .5) * 2 * aperture;
 						r += basic_render(Ray(pp, (pp - loc).norm()), 0, X);
 					}
 					c[y * w + x] += (r / samp).clip()/4;
