@@ -1,0 +1,112 @@
+---
+title: "光栅图形学作业"
+author: "翁家翌 2016011446"
+date: "`r Sys.Date()`"
+output:
+  pdf_document:
+    latex_engine: xelatex
+    number_sections: yes
+    toc: yes
+  word_document:
+    toc: yes
+  html_document:
+    toc: yes
+header-includes: \usepackage{ctex}
+---
+
+\newpage
+
+# 基本选题
+
+基本选题为区域填充，顺便把画线给实现了。编程语言使用的是`python3`，使用的第三方库为`opencv`。使用如下命令安装依赖包：
+
+```{r, eval=FALSE}
+sudo pip3 install -r requirements.txt
+```
+
+所有代码位于`main.py`中，使用命令`python3 main.py`即可运行。
+
+## 画线
+
+实现画线的函数为`line(p1,p2)`和`drawline(a,p1,p2,col)`，作用如下：
+
+- `line(p1,p2)`：输入两个点坐标，默认$|p_{1_x}-p_{2_x}|\ge|p_{1_y}-p_{2_y}|$，返回一个从$p_1$到$p_2$需要着色的点的list
+- `drawline(a,p1,p2,col)`：输入图像矩阵a、线段起点终点和需要着色的颜色，在a中画出该线段
+
+实现效果如图\ref{fig:1}所示。
+
+\begin{figure}[htpb]
+\centering
+\includegraphics[width=0.5\linewidth]{pic/1.png}
+\caption{一个五角星}
+\label{fig:1}
+\end{figure}
+
+可以看到放大之后的毛刺效果，如图\ref{fig:z1}所示。
+
+\begin{figure}[htpb]
+\centering
+\includegraphics[width=0.6\linewidth]{pic/z1.png}
+\caption{放大之后的线段}
+\label{fig:z1}
+\end{figure}
+
+## 区域填充
+
+实现函数为`colorize(a,p,bg,fg)`，具体为在矩阵$a$中，以点$p$为起始点，填充颜色$fg$，默认去覆盖颜色$bg$。使用队列实现，效果如图\ref{fig:2}所示。
+
+\begin{figure}[htpb]
+\centering
+\includegraphics[width=0.4\linewidth]{pic/2.png}
+\caption{一个白白的五角星}
+\label{fig:2}
+\end{figure}
+
+可以看到毛刺效果并没有消失，如图\ref{fig:z2}所示。
+
+\begin{figure}[htpb]
+\centering
+\includegraphics[width=0.6\linewidth]{pic/z2.png}
+\caption{放大之后的边缘}
+\label{fig:z2}
+\end{figure}
+
+\newpage
+# 加分项
+
+此处实现了反走样功能
+
+## 反走样
+
+反走样使用卷积操作使图像平滑，其中卷积核为
+
+$$
+\mathfrak{F}=\frac{1}{16}\begin{bmatrix}1&2&1\\2&4&2\\1&2&1\end{bmatrix}
+$$
+
+我自己手写了一下卷积实现（代码中91-95行，已注释），经过测试，运行效率远不如opencv中的`filter2D`函数来得快。实现反走样之后的效果如图\ref{fig:3}所示。
+
+\begin{figure}[htpb]
+\centering
+\includegraphics[width=0.5\linewidth]{pic/3.png}
+\caption{一个没有毛刺的五角星}
+\label{fig:3}
+\end{figure}
+
+可以看到边缘已经平滑，如图\ref{fig:z3}所示。
+
+\begin{figure}[htpb]
+\centering
+\includegraphics[width=0.6\linewidth]{pic/z3.png}
+\caption{放大之后的边缘}
+\label{fig:z3}
+\end{figure}
+
+出于美观角度，最后在背景中又人为地加入了一些噪点，能够拥有更好的视觉效果。最终成品如图\ref{fig:4}所示。
+
+\begin{figure}[htpb]
+\centering
+\includegraphics[width=1\linewidth]{pic/4.png}
+\caption{一个有背景的五角星}
+\label{fig:4}
+\end{figure}
