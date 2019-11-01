@@ -1,25 +1,24 @@
 # Computational Graphics - THU Spring 2018
 
-## HW1
+![](https://img.shields.io/github/repo-size/Trinkle23897/Computational-Graphics-THU-2018.svg?style=flat)
 
-光栅图形学作业 (10’)
+## HW1(10')
 
 实现一个感兴趣的光栅图形学算法
 
 | 基本选题      | 加分项                                                     |
 | ------------- | ---------------------------------------------------------- |
-| 画线(6’)      | SSAA(2’), Kernel(2’), 区域采样(2’), 相交线反走样的case(4’) |
-| 画弧(8’)      | 同上                                                       |
-| 区域填充(10’) | 边界反走样(2’)                                             |
+| 画线(6')      | SSAA(2'), Kernel(2'), 区域采样(2'), 相交线反走样的case(4') |
+| 画弧(8')      | 同上                                                       |
+| 区域填充(10') | 边界反走样(2')                                             |
 
 ### Result
 
 图太丑了而且这个作业也很trivial就不放图了
-<!--![](hw1/pic/4.png)-->
 
-## HW2
+## HW2(60')
 
-参数曲线/曲面的三维造形与渲染 (60')
+参数曲线/曲面的三维造形与渲染
 
 - 利用参数曲线/曲面凹一个造型
 - 渲染
@@ -44,7 +43,7 @@ OpenMP: 2, GPU: 5
 其他额外效果: 凹凸贴图、体积光等: [5, ?]
 ```
 
-代码基于smallpt，添加了纹理映射、旋转Bezier求交、景深的效果，详情可查阅 hw2/report/report.pdf
+代码基于smallpt，添加了纹理映射、旋转Bezier求交、景深的效果，详情可查阅 [hw2/report.pdf](hw2/report.pdf)
 
 ### Compile & Run
 
@@ -60,19 +59,17 @@ g++ main.cpp -oa -O3 -fopenmp
 ./a 3840 2160 test.ppm 100000
 ```
 
-欢迎pr！
-
 ### Result
 
-![](hw2/report/wallpaper/small.jpg)
+![](result/trinkle/small.jpg)
 
-upd 191005: branch `balls` has another scenario. Here's the (p过的) result: (another is `ball_*.png`)
+upd 191005: branch `balls` has another scenario. Here's the result: (others are `ball_*.png` in the `releases` page)
 
-![](hw2/report/wallpaper/ball_p2.jpg)
+![](result/trinkle/ball_raw.jpg)
 
-## HW3
+## HW3(30')
 
-图像大作业 (30')
+图像大作业
 
 1. 基于优化的图像彩色化 Colorization Using Optimization, SIGGRAPH 2004.
 2. 内容敏感的图像缩放 Seam Carving for Content-Aware Image Resizing, SIGGRAPH 2007.
@@ -82,7 +79,7 @@ upd 191005: branch `balls` has another scenario. Here's the (p过的) result: (a
 
 ### Result
 
-![](hw3/MVC/pic/2_6.png)
+[hw3/MVC/pic/2_6.png](hw3/MVC/pic/2_6.png)
 
 ## Other Result
 
@@ -90,11 +87,11 @@ upd 191005: branch `balls` has another scenario. Here's the (p过的) result: (a
 
 Please refer to [https://github.com/MashPlant/computational_graphics_2019](https://github.com/MashPlant/computational_graphics_2019) for more details.
 
-![](result_MashPlant/finalr.jpg)
+![](result/MashPlant/finalb.jpg)
 
-![](result_MashPlant/finalb.jpg)
+![](result/MashPlant/finalr.jpg)
 
-![](https://github.com/MashPlant/computational_graphics_2019/blob/master/ray_tracer/readme_pic/heart_dispersion1.jpg)
+![](result/MashPlant/heart_water.jpg)
 
 ## LICENSE
 
