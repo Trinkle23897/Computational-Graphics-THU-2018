@@ -67,6 +67,8 @@ upd 191005: branch `balls` has another scenario. Here's the result: (others are 
 
 ![](result/trinkle/ball_raw.jpg)
 
+PS：别只抄我构图，这里有一堆：[https://graphics.cs.utah.edu/trc](https://graphics.cs.utah.edu/trc)
+
 ## HW3(30')
 
 图像大作业
