@@ -47,7 +47,7 @@ public:
 		}
 	};
 	KDTreeNode* tree;
-	KDTree() { tree = NULL; }
+	KDTree(): n(0), root(0), tree(NULL) {}
 	~KDTree() { if (tree != NULL) delete[] tree; }
 	void mt(int f, int x) {
 		tree[f].m[0] = tree[f].m[0].min(tree[x].m[0]);
@@ -63,7 +63,7 @@ public:
 		if (o < r) tree[o].s[1] = bt(o + 1, r, d == 2 ? 0 : d + 1), mt(o, tree[o].s[1]);
 		return o;
 	}
-	KDTree(std::vector<SPPMnode>& node) { // multi-thread forbid !!!
+	KDTree(std::vector<SPPMnode>& node): KDTree() { // multi-thread forbid !!!
 		init(node);
 	}
 	void init(std::vector<SPPMnode>& node) { // multi-thread forbid !!!
@@ -73,14 +73,14 @@ public:
 		for (int i = 0; i < n; ++i) {
 			tree[i + 1].sppm = node[i];
 		}
-		root = bt(1, n, 0);
+		root = n ? bt(1, n, 0) : 0;
 	}
 	ld getdis2(P3 pos, P3 m0, P3 m1) {
 		return (P3().max(pos - m1).max(m0 - pos)).len2();
 	}
 	void _query(const SPPMnode&node, IMGbuf* c, int o) {
 		if ((tree[o].sppm.pos - node.pos).len2() <= sqr(tree[o].sppm.r) && tree[o].sppm.dir.dot(node.dir) >= 0)
-			c[tree[o].sppm.index].add(node.col.mult(tree[o].sppm.col), node.prob);
+			c[tree[o].sppm.index].add(node.col.mult(tree[o].sppm.col) * (node.prob * tree[o].sppm.prob));
 		ld d[2];
 		if (tree[o].s[0] > 0) d[0] = getdis2(node.pos, tree[tree[o].s[0]].m[0], tree[tree[o].s[0]].m[1]); else d[0] = INF;
 		if (tree[o].s[1] > 0) d[1] = getdis2(node.pos, tree[tree[o].s[1]].m[0], tree[tree[o].s[1]].m[1]); else d[1] = INF;
@@ -95,10 +95,10 @@ public:
 		if (tree[o].s[1] > 0) _modify(tree[o].s[1]), mt(o, tree[o].s[1]);
 	}
 	void query(SPPMnode node, IMGbuf* c) {
-		_query(node, c, root);
+		if (root) _query(node, c, root);
 	}
 	void modify() {
-		_modify(root);
+		if (root) _modify(root);
 	}
 };
 

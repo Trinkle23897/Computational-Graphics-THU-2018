@@ -43,25 +43,46 @@ OpenMP: 2, GPU: 5
 其他额外效果: 凹凸贴图、体积光等: [5, ?]
 ```
 
-代码基于smallpt，添加了纹理映射、旋转Bezier求交、景深的效果，详情可查阅 [hw2/report.pdf](hw2/report.pdf)
+代码基于 smallpt，实现了路径追踪（PT）和随机渐进式光子映射（SPPM），支持纹理映射、旋转 Bezier 曲面求交及景深，详情可查阅 [hw2/report.pdf](hw2/report.pdf)。
 
 ### Compile & Run
 
-```
-cd sppm
-g++ main.cpp -oa -O3 -fopenmp
+```bash
+cd hw2/sppm
+g++ main.cpp -o render -O3 -fopenmp
 ```
 
-由于sppm代码里面还有bug，就先没调用……实际上里面是pt的接口，当然可以直接把main函数的baseline改成sppm，不过相应的参数也要跟着改了。
+macOS 自带的 Apple Clang 不支持 `-fopenmp`，可以使用 Homebrew 安装的 GCC：
 
+```bash
+/opt/homebrew/bin/g++-15 main.cpp -o render -O3 -fopenmp
 ```
-./a 640 480 try.ppm 10
-./a 3840 2160 test.ppm 100000
+
+传入 4 个参数时使用 PT：
+
+```bash
+./render 640 480 pt.ppm 10
+./render 3840 2160 high-res.ppm 100000
 ```
+
+传入 7 个参数时使用 SPPM：
+
+```bash
+# 宽度 高度 输出前缀 迭代次数 每像素光子数 初始半径 alpha
+./render 640 480 sppm_ 100 20 3 0.7
+```
+
+SPPM 每轮使用 KD-tree 汇合相机可见点和光子路径，并逐像素更新搜索半径与累计通量。运行过程中会依次输出 `sppm_001.ppm`、`sppm_002.ppm` 等结果；`alpha` 必须位于 `(0, 1]`。可以通过 `OMP_NUM_THREADS=8` 控制 OpenMP 线程数量。
 
 ### Result
 
+**Path Tracing**
+
 ![](result/trinkle/small.jpg)
+
+**Stochastic Progressive Photon Mapping**
+
+![](result/trinkle/sppm.png)
 
 upd 191005: branch `balls` has another scenario. Here's the result: (others are `ball_*.png` in the `releases` page)
 

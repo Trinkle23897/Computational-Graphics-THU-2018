@@ -134,17 +134,17 @@ void sppm_forward(Ray ray, int dep, P3 col, unsigned short *X, IMGbuf* c, KDTree
 	P3 f = feature.second, n = obj->norm(x), nl = n.dot(ray.d) < 0 ? into = 1, n : -n;
 	ld p = f.max();
 	if (f.max() < eps) {
-		kdt->query(SPPMnode(x, col, nl), c);
+		kdt->query(SPPMnode(x, col, nl, 1, -1, prob), c);
 		return;
 	}
 	if (++dep > 5)
 		if (erand48(X) < p) f /= p;
 		else {
-			kdt->query(SPPMnode(x, col, nl), c);
+			kdt->query(SPPMnode(x, col, nl, 1, -1, prob), c);
 			return;
 		}
 	if (feature.first == DIFF) {
-		kdt->query(SPPMnode(x, col, nl), c); // query col
+		kdt->query(SPPMnode(x, col, nl, 1, -1, prob), c); // query col
 		ld r1 = 2 * PI * erand48(X), r2 = erand48(X), r2s = sqrt(r2);
 		P3 w = nl, u=((fabs(w.x) > .1 ? P3(0, 1) : P3(1)) & w).norm(), v = w & u;
 		P3 d = (u * cos(r1) * r2s + v * sin(r1) * r2s + w * sqrt(1 - r2)).norm();
@@ -154,7 +154,7 @@ void sppm_forward(Ray ray, int dep, P3 col, unsigned short *X, IMGbuf* c, KDTree
 		Ray reflray = Ray(x, ray.d.reflect(nl));
 		if (feature.first == SPEC) {
 			if (texture.filename == "vase.png")
-				kdt->query(SPPMnode(x, col, nl), c); // query col
+				kdt->query(SPPMnode(x, col, nl, 1, -1, prob), c); // query col
 			return sppm_forward(reflray, dep, col.mult(f), X, c, kdt, prob);
 		}
 		else {
