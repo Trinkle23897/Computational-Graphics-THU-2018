@@ -5,9 +5,9 @@ int baseline(int argc, char *argv[])
 	// Ray ray(P3(427,1000,447),P3(-1,-2,-1.5).norm());
 	// find_intersect_simple(ray);
 	int w = atoi(argv[1]), h = atoi(argv[2]), samp = atoi(argv[4]);
-	Ray cam(P3(150, 28, 260), P3(-0.45, 0.001, -1).norm());
+	Ray cam(scene_camera.origin, scene_camera.direction.norm());
 	P3 cx = P3(w * .33 / h), cy=(cx & P3(cam.d.x, 0, cam.d.z)).norm() * .33, r, *c = new P3[w * h];
-	cx *= 1.05;
+	cx *= scene_camera.scale;
 	ld aperture = .0;
 #pragma omp parallel for schedule(dynamic, 1) private(r)
 	for (int y = 0; y < h; ++y) {
@@ -22,7 +22,8 @@ int baseline(int argc, char *argv[])
 						ld r1 = 2 * erand48(X), dx = r1 < 1 ? sqrt(r1): 2-sqrt(2-r1);
 						ld r2 = 2 * erand48(X), dy = r2 < 1 ? sqrt(r2): 2-sqrt(2-r2);
 						P3 d = cx * ((sx + dx / 2 + x) / w - .5) + cy * ((sy + dy / 2 + y) / h - .5) + cam.d;
-						P3 pp = cam.o + d * 150, loc = cam.o + (P3(erand48(X) * 1.05, erand48(X)) - .5) * 2 * aperture;
+						P3 pp = cam.o + d * scene_camera.offset,
+							loc = cam.o + (P3(erand48(X) * scene_camera.scale, erand48(X)) - .5) * 2 * aperture;
 						r += basic_render(Ray(pp, (pp - loc).norm()), 0, X);
 					}
 					c[y * w + x] += (r / samp).clip()/4;
@@ -49,7 +50,7 @@ int sppm(int argc, char* argv[])
 	int w = atoi(argv[1]), h = atoi(argv[2]), iter = atoi(argv[4]);
 	ld rad = atof(argv[6]), alpha = atof(argv[7]);
 	int photons = std::max(1, int(ceil(atof(argv[5]) * w * h)));
-	Ray cam(P3(150, 28, 260), P3(-0.45, 0.001, -1).norm());
+	Ray cam(scene_camera.origin, scene_camera.direction.norm());
 	int nth = omp_get_max_threads();
 	P3 power = scene[scene_num - 1]->texture.emission * (PI * sqr(18));
 	--scene_num;
@@ -57,7 +58,7 @@ int sppm(int argc, char* argv[])
 	std::vector<std::vector<IMGbuf>> c(nth, std::vector<IMGbuf>(h * w));
 	std::vector<IMGbuf> final(h * w), now(h * w);
 	std::vector<ld> radius(h * w, rad);
-	cx *= 1.05;
+	cx *= scene_camera.scale;
 	ld aperture = .0;
 	std::vector<std::vector<SPPMnode>> ball(nth);
 	KDTree tree;
@@ -74,7 +75,8 @@ int sppm(int argc, char* argv[])
 				ld r1 = 2 * erand48(X), dx = r1 < 1 ? sqrt(r1): 2-sqrt(2-r1);
 				ld r2 = 2 * erand48(X), dy = r2 < 1 ? sqrt(r2): 2-sqrt(2-r2);
 				P3 d = cx * ((dx / 2 + x + sx) / w - .5) + cy * ((dy / 2 + y + sy) / h - .5) + cam.d;
-				P3 pp = cam.o + d * 150, loc = cam.o + (P3(erand48(X) * 1.05, erand48(X)) - .5) * 2 * aperture;
+				P3 pp = cam.o + d * scene_camera.offset,
+					loc = cam.o + (P3(erand48(X) * scene_camera.scale, erand48(X)) - .5) * 2 * aperture;
 				std::vector<SPPMnode> tmp = sppm_backtrace(Ray(pp, (pp - loc).norm()), 0, y * w + x, X);
 				for (SPPMnode& node: tmp)
 					if (node.index >= 0) {
@@ -132,14 +134,26 @@ int sppm(int argc, char* argv[])
 
 int main(int argc, char*argv[])
 {
-	if (argc != 5 && argc != 8) {
-		fprintf(stderr, "Usage: %s WIDTH HEIGHT OUTPUT SAMPLES [PHOTONS_PER_PIXEL RADIUS ALPHA]\n", argv[0]);
+	int positional = argc;
+	if (argc >= 3 && std::string(argv[argc - 2]) == "--scene") {
+		if (!select_scene(argv[argc - 1])) {
+			fprintf(stderr, "Unknown scene: %s (expected vase or balls)\n", argv[argc - 1]);
+			return 1;
+		}
+		positional -= 2;
+	}
+	if (positional != 5 && positional != 8) {
+		fprintf(stderr, "Usage: %s WIDTH HEIGHT OUTPUT SAMPLES [PHOTONS_PER_PIXEL RADIUS ALPHA] [--scene vase|balls]\n", argv[0]);
 		return 1;
 	}
 	if (atoi(argv[1]) <= 0 || atoi(argv[2]) <= 0 || atoi(argv[4]) <= 0 ||
-		(argc == 8 && (atof(argv[5]) <= 0 || atof(argv[6]) <= 0 || atof(argv[7]) <= 0 || atof(argv[7]) > 1))) {
+		(positional == 8 && (atof(argv[5]) <= 0 || atof(argv[6]) <= 0 || atof(argv[7]) <= 0 || atof(argv[7]) > 1))) {
 		fputs("Invalid rendering parameters\n", stderr);
 		return 1;
 	}
-	return argc == 8 ? sppm(argc, argv) : baseline(argc, argv);
+	if (positional == 8 && scene == balls) {
+		fputs("The CPU SPPM backend supports one light; use CUDA SPPM for the balls scene\n", stderr);
+		return 1;
+	}
+	return positional == 8 ? sppm(positional, argv) : baseline(positional, argv);
 }

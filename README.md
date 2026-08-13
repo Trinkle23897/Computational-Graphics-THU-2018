@@ -43,50 +43,195 @@ OpenMP: 2, GPU: 5
 其他额外效果: 凹凸贴图、体积光等: [5, ?]
 ```
 
-代码基于 smallpt，实现了路径追踪（PT）和随机渐进式光子映射（SPPM），支持纹理映射、旋转 Bezier 曲面求交及景深，详情可查阅 [hw2/report.pdf](hw2/report.pdf)。
+代码基于 smallpt，实现路径追踪（PT）、随机渐进式光子映射（SPPM）和新的 CUDA 混合低方差 SPPM。原始花瓶场景与原 `balls` 分支的玻璃球场景现在都在 `master`，通过 `--scene vase` / `--scene balls` 直接切换，不需要 checkout 其他分支。旋转 Bezier 曲面、彩色纹理、镜面反射、玻璃折射和光源构图均保留原始设定。课程报告见 [hw2/report.pdf](hw2/report.pdf)。
 
-### Compile & Run
+### 直接渲染结果
+
+下图均为渲染器直接输出的原始颜色，仅将 PPM 无损转换成 PNG，没有 Photoshop 调色、改曝光或手工修图。
+
+**花瓶：**
+
+![花瓶场景：CUDA 混合低方差 SPPM 直接渲染](docs/render/vase-hybrid-sppm.png)
+
+**Balls：**
+
+![Balls 场景：CUDA 混合低方差 SPPM 直接渲染](docs/render/balls-hybrid-sppm.png)
+
+### 新算法：材质分层的低方差 Hybrid SPPM
+
+直接 PT 从相机随机寻找光源，漫反射表面上的大部分路径贡献很小；传统 SPPM 能稳定找到焦散，但容易把镜面高光和清晰倒影混进光子半径，或者把大量阴影样本浪费在看不见的光源上。新算法把同一条光传输积分拆成适合不同采样器的部分：
+
+$$L_o = L_{\mathrm{diffuse,SPPM}} + L_{\mathrm{specular,PT}} + L_{\mathrm{direct,NEE}}.$$
+
+1. **GPU 光子映射负责漫反射和焦散。** 相机可见点与光子落点进入空间哈希，通过同一物体、法线和搜索半径汇合；每个像素独立更新半径及累计通量。球形和盒形光源按面积与发光功率采样，玻璃界面使用正确的 $\eta^2$ 传输 Jacobian，因此玻璃球内的五个光源也能贡献折射和焦散。
+2. **镜面与折射使用条件分层 PT。** 对 `specular=0.01` 之类的稀有 BSDF 分量直接单独采样，再乘回它的真实权重，不必等待普通路径以 1% 概率碰巧撞上它。地板倒影、玻璃边缘和花瓶高光独立累积，不会被 SPPM 的汇合半径抹糊。
+3. **直接光照只采样真正可见的光源。** 玻璃壳里的灯仍进入光子分布，但不会出现在必定被外壳遮挡的 next-event-estimation 分布中；盒形灯只采样朝向着色点的面，并补偿正确 PDF。这样同等阴影射线数量能得到更多有效贡献。
+4. **在材质空间自适应重建，而不是糊整张图。** 漫反射先拆出反照率，再按物体 ID、法线、几何位置和颜色重建照度；混合材质及透明玻璃根据局部方差扩大支持区域，同时保护贴图边缘和镜面高光。重建属于有约束的偏差—方差折中，不会假装自己是无偏估计。
+5. **用独立随机种子衡量真实噪声。** 旧参考图本身也有随机颗粒，逐像素逼近它并不能说明收敛更快。对两个独立结果使用 $\sigma \approx \sqrt{\mathbb{E}[(I_1-I_2)^2]/2}$；花纹、反射、高光等稳定结构自动抵消。多个 seed 在线性辐射亮度域平均，估计噪声继续按 $1/\sqrt{N}$ 下降。
+
+换句话说，速度提升来自**减少无效样本、降低 estimator 方差，再用 GPU 并行执行**，不是换掉场景、暗化画面或者把高光统一涂抹。实现见 [hw2/sppm/cuda.cu](hw2/sppm/cuda.cu)、[hw2/sppm/scene.hpp](hw2/sppm/scene.hpp) 和 [hw2/sppm/texture.hpp](hw2/sppm/texture.hpp)。
+
+#### 同场景渲染对比
+
+下面的图使用相同场景、相机、光源和原始颜色；PT、普通 SPPM 与 Hybrid SPPM 分别单独直接渲染，不做后期调色。
+
+| 算法 | 花瓶 | Balls |
+| --- | --- | --- |
+| CUDA PT | ![花瓶 PT](docs/render/vase-pt.png) | ![Balls PT](docs/render/balls-pt.png) |
+| CUDA SPPM | ![花瓶 SPPM](docs/render/vase-sppm.png) | ![Balls SPPM](docs/render/balls-sppm.png) |
+| CUDA Hybrid SPPM | ![花瓶 Hybrid SPPM](docs/render/vase-hybrid-comparison.png) | ![Balls Hybrid SPPM](docs/render/balls-hybrid-comparison.png) |
+
+以上对比图分辨率均为 960×540；PT 使用每子像素 64 次采样，两种 SPPM 均使用 48 轮，花瓶每轮每像素 5 个光子、balls 每轮每像素 8 个光子。以 balls 背景平滑区域为例，8-bit 高通颗粒 RMS 从 PT 的 18.44 降至普通 SPPM 的 1.17，再降至 Hybrid SPPM 的 0.23；后两者该区域平均亮度分别是 49.36 和 49.43，没有通过调暗来掩盖噪点。因为三种 estimator 的计算量不同，这里对比的是各自固定参数下的实际输出，不把它们冒充成严格同耗时 benchmark。
+
+在一张 NVIDIA H200 上，以 640×360 分辨率对比 16 线程 CPU：
+
+| 模式 | CPU 总耗时 | GPU kernel | GPU 总耗时 |
+| --- | ---: | ---: | ---: |
+| PT，每子像素 8 次采样 | 2.399 s | 0.096 s | 0.741 s |
+| SPPM，4 轮，每轮每像素 4 个光子 | 30.586 s | 3.363 s | 4.028 s |
+
+GPU 总耗时包含 CUDA 初始化、贴图上传和图像写出。1920×1080 下，以独立 seed 差分估计 8-bit 亮度 RMS：花瓶白瓷 0.36、蓝色花纹 0.26；balls 背景 0.24、地板 0.22、倒影 0.23、玻璃 0.25。上述低噪声结果分别合并 2 个和 3 个独立 seed；页面顶部展示的是单次直接渲染，不依赖后期修图。
+
+### 编译 CPU backend
+
+进入贴图所在目录后编译：
 
 ```bash
 cd hw2/sppm
-g++ main.cpp -o render -O3 -fopenmp
+g++ -O3 -fopenmp main.cpp -o render
 ```
 
-macOS 自带的 Apple Clang 不支持 `-fopenmp`，可以使用 Homebrew 安装的 GCC：
+macOS 自带的 Apple Clang 不支持 OpenMP，可以使用 Homebrew GCC：
 
 ```bash
-/opt/homebrew/bin/g++-15 main.cpp -o render -O3 -fopenmp
+brew install gcc
+/opt/homebrew/bin/g++-15 -O3 -fopenmp main.cpp -o render
 ```
 
-传入 4 个参数时使用 PT：
+CPU PT 支持两个场景，默认是 `vase`：
 
 ```bash
-./render 640 480 pt.ppm 10
-./render 3840 2160 high-res.ppm 100000
+# 宽度 高度 输出文件 每子像素采样数 [--scene vase|balls]
+./render 640 480 vase-cpu-pt.ppm 32 --scene vase
+./render 1920 1080 balls-cpu-pt.ppm 1024 --scene balls
+
+# 原来的命令仍兼容，默认渲染花瓶
+./render 3840 2160 vase-cpu-4k.ppm 100000
 ```
 
-传入 7 个参数时使用 SPPM：
+CPU SPPM 使用 KD-tree，每轮输出一张 PPM：
 
 ```bash
 # 宽度 高度 输出前缀 迭代次数 每像素光子数 初始半径 alpha
-./render 640 480 sppm_ 100 20 3 0.7
+OMP_NUM_THREADS=8 ./render 640 480 vase-sppm_ 100 20 3 0.7 --scene vase
+# 输出 vase-sppm_001.ppm ... vase-sppm_100.ppm
 ```
 
-SPPM 每轮使用 KD-tree 汇合相机可见点和光子路径，并逐像素更新搜索半径与累计通量。运行过程中会依次输出 `sppm_001.ppm`、`sppm_002.ppm` 等结果；`alpha` 必须位于 `(0, 1]`。可以通过 `OMP_NUM_THREADS=8` 控制 OpenMP 线程数量。
+原始 CPU SPPM 只支持单光源，因此多光源 balls 场景请使用 CPU PT 或下面的 CUDA SPPM。`alpha` 必须位于 `(0, 1]`。
 
-### Result
+### 编译 CUDA backend
 
-**Path Tracing**
+1. 准备 NVIDIA GPU、驱动和 CUDA Toolkit，确认驱动与编译器可用：
 
-![](result/trinkle/small.jpg)
+```bash
+nvidia-smi
+nvcc --version
+```
 
-**Stochastic Progressive Photon Mapping**
+2. 进入渲染器目录；程序按当前工作目录加载所有贴图：
 
-![](result/trinkle/sppm.png)
+```bash
+cd hw2/sppm
+```
 
-upd 191005: branch `balls` has another scenario. Here's the result: (others are `ball_*.png` in the `releases` page)
+3. 根据显卡架构编译：
 
-![](result/trinkle/ball_raw.jpg)
+```bash
+# H100 / H200
+nvcc -O3 -arch=sm_90 -std=c++17 cuda.cu -o render-cuda
+
+# A100 则使用：
+# nvcc -O3 -arch=sm_80 -std=c++17 cuda.cu -o render-cuda
+
+# RTX 4090 则使用：
+# nvcc -O3 -arch=sm_89 -std=c++17 cuda.cu -o render-cuda
+```
+
+4. 先跑低分辨率 PT，验证默认花瓶场景和 balls 场景：
+
+```bash
+./render-cuda 640 360 vase-pt.ppm 32 --scene vase
+./render-cuda 640 360 balls-pt.ppm 32 --scene balls
+```
+
+5. 使用同一个二进制渲染普通 SPPM 或低方差 Hybrid SPPM：
+
+```bash
+# 花瓶：普通 SPPM
+./render-cuda 960 540 vase-sppm.ppm 48 5 .45 1 \
+  --scene vase --nearest
+
+# 花瓶：低方差 Hybrid SPPM，保留白瓷高光、蓝色纹样和地板星星
+./render-cuda 1920 1080 vase-hybrid.ppm 96 5 .35 1 \
+  --scene vase --nearest --shadow-samples 2 \
+  --hybrid-samples 2048 --reconstruction-radius 4
+
+# Balls：自动设置原分支的相机和五个球内光源
+./render-cuda 1920 1080 balls-hybrid.ppm 96 8 .4 1 \
+  --scene balls --nearest --hybrid-samples 2048 \
+  --reconstruction-radius 8
+
+# 8K 花瓶；高分辨率下相应缩小光子汇合半径
+./render-cuda 7680 4320 vase-8k.ppm 64 1 .1 1 \
+  --scene vase --nearest --hybrid-samples 384 \
+  --reconstruction-radius 6
+```
+
+前四个位置参数表示 `宽度 高度 输出文件 每子像素采样数`，对应 PT；再提供 `每像素光子数 初始半径 alpha` 就切换到 SPPM。CUDA SPPM 只输出最终结果。多卡机器用 `CUDA_VISIBLE_DEVICES=0` 指定 GPU。
+
+6. 可选：无损转换成网页可直接显示的 PNG：
+
+```bash
+python3 -m pip install Pillow
+python3 -c 'from PIL import Image; Image.open("vase-hybrid.ppm").save("vase-hybrid.png")'
+```
+
+#### CUDA 参数与材质
+
+| 效果 | 参数 | 说明 |
+| --- | --- | --- |
+| 场景 | `--scene vase` / `--scene balls` | 同时切换场景、光源和默认相机 |
+| 镜面分层 | `--hybrid-samples 2048` | 独立采样稀有镜面和折射，保留真实 BSDF 权重 |
+| 引导重建 | `--reconstruction-radius 4` | 根据物体、法线、反照率、深度和局部方差压低随机噪声 |
+| 独立随机序列 | `--seed 7` | 让相机、光子和材质采样可复现 |
+| 纹理 | `--nearest` | 保留原始最近邻贴图；默认双线性过滤 |
+| 景深 | `--aperture .8 --focus 205` | 薄透镜；光圈为 0 时使用针孔相机 |
+| 软阴影 | `--shadow-samples 4 --light-radius 18` | 面积光采样和遮挡测试 |
+| 抗锯齿 | `--aa 3` | 每像素 3×3 分层采样，支持 1–4 |
+| 凹凸贴图 | `--bump 2` | 用纹理亮度梯度扰动法线 |
+| PBR | `--pbr --roughness .35 --metallic .2` | GGX、Smith 几何项和 Schlick 菲涅耳 |
+| 色散 | `--dispersion .06` | RGB 使用不同玻璃折射率 |
+| 体积光 | `--medium-density .004 --medium-albedo .8 --anisotropy .5` | 参与介质与 Henyey–Greenstein 相函数 |
+| 体渲染 | `--volume-density .1 --volume-step 1 --volume-emission .5` | 异质体吸收、散射和可选自发光 |
+| 自定义相机 | `--camera-origin X,Y,Z --camera-direction X,Y,Z` | 覆盖所选场景的默认机位；放在 `--scene` 后面 |
+
+`--cinematic` 会启用景深、PBR、凹凸贴图、参与介质和色散；复现原始场景时不要加这个选项。异质发光体积必须显式开启，不会无故出现在画面中。
+
+添加场景时直接声明材质，不需要固定贴图名称或特殊 RGB 值：
+
+```cpp
+MaterialProperties floor;
+floor.mapping = UV_PLANAR;
+floor.axis_u = P3(1, 0, 0);
+floor.axis_v = P3(0, 1, 0);
+floor.specular = .12;
+floor.roughness = .3;
+
+Object* ground = new CubeObject(P3(-300, -100, -300), P3(200, 300, 150),
+    Texture("any-floor-name.png", 1.5, P3(.9, .9, .9), P3(), DIFF, floor));
+```
+
+`MaterialProperties` 支持平面、球面、柱面、Bezier 和轴向 UV 映射；`specular_mask` / `diffuse_mask` 显式描述空间变化的 BSDF。颜色贴图只表示颜色，黑色或 `(233,233,233)` 不会偷偷改变材质；球形和盒形光源自动进入相应的重要性采样分布。
 
 PS：别只抄我构图，这里有一堆：[https://graphics.cs.utah.edu/trc](https://graphics.cs.utah.edu/trc)
 

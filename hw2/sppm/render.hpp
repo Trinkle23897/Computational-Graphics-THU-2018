@@ -87,11 +87,14 @@ std::vector<SPPMnode> sppm_backtrace(Ray ray, int dep, int index, unsigned short
 	Ray reflray = Ray(x, ray.d.reflect(nl));
 	// result.push_back(SPPMnode(x, pref.mult(f), nl, 1, index, prob));
 	// return result;
-	if (feature.first == DIFF || texture.filename == "vase.png") { // vase: 0.8 prob
-		result.push_back(SPPMnode(x, pref.mult(f), nl, 1, index, prob * (texture.filename == "vase.png" ? .9 : 1)));
+	bool mixed = texture.refl == DIFF && texture.material.specular > 0;
+	if (feature.first == DIFF || mixed) {
+		result.push_back(SPPMnode(x, pref.mult(f), nl, 1, index,
+			prob * (mixed ? 1 - texture.material.specular : 1)));
 	}
-	if (feature.first == SPEC || texture.filename == "vase.png") { // vase: 0.2 prob
-		tmp = sppm_backtrace(reflray, dep, index, X, pref.mult(f), prob * (texture.filename == "vase.png" ? .1 : 1.));
+	if (feature.first == SPEC || mixed) {
+		tmp = sppm_backtrace(reflray, dep, index, X, pref.mult(f),
+			prob * (mixed ? texture.material.specular : 1));
 		result.insert(result.end(), tmp.begin(), tmp.end());
 	}
 	if (feature.first == REFR) {
@@ -153,7 +156,7 @@ void sppm_forward(Ray ray, int dep, P3 col, unsigned short *X, IMGbuf* c, KDTree
 	else {
 		Ray reflray = Ray(x, ray.d.reflect(nl));
 		if (feature.first == SPEC) {
-			if (texture.filename == "vase.png")
+			if (texture.refl == DIFF && texture.material.specular > 0)
 				kdt->query(SPPMnode(x, col, nl, 1, -1, prob), c); // query col
 			return sppm_forward(reflray, dep, col.mult(f), X, c, kdt, prob);
 		}
