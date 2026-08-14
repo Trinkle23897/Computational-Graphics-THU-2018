@@ -34,11 +34,13 @@ def run_job(job, options, directory):
     else:
         command += [str(iterations), "5" if scene == "vase" else "8", ".5", "1"]
     command += ["--scene", scene, "--nearest", "--seed", str(seed)]
-    if algorithm in ("hybrid", "reuse"):
+    if algorithm in ("hybrid", "reuse", "guided"):
         command += ["--hybrid-samples", str(iterations * 16), "--reconstruction-radius",
                     "4" if scene == "vase" else "8"]
     if algorithm == "reuse":
         command.append("--reuse")
+    if algorithm == "guided":
+        command.append("--guided")
     result = subprocess.run(command, cwd=options.binary.parent,
                             env=dict(os.environ, CUDA_VISIBLE_DEVICES=str(gpu)),
                             text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -92,9 +94,10 @@ def summarize(records, width, height):
 def plot(summaries, destination):
     import matplotlib.pyplot as plt
 
-    colors = {"pt": "#d15f4a", "sppm": "#c79a35", "hybrid": "#657bc2", "reuse": "#2b9e77"}
+    colors = {"pt": "#d15f4a", "sppm": "#c79a35", "hybrid": "#657bc2", "reuse": "#2b9e77",
+              "guided": "#9146ad"}
     names = {"pt": "Path tracing", "sppm": "SPPM", "hybrid": "Hybrid SPPM",
-             "reuse": "Stratified reuse"}
+             "reuse": "Stratified reuse", "guided": "Guided decomposition"}
     figure, axes = plt.subplots(2, 2, figsize=(11, 7), constrained_layout=True)
     for row, scene in enumerate(("vase", "balls")):
         for algorithm in colors:
@@ -120,7 +123,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binary", type=Path, default=Path("./render-cuda"))
     parser.add_argument("--output", type=Path, default=Path("/tmp/sppm-convergence"))
-    parser.add_argument("--algorithms", default="pt,sppm,hybrid,reuse")
+    parser.add_argument("--algorithms", default="pt,sppm,hybrid,reuse,guided")
     parser.add_argument("--iterations", default="4,8,16,32,64")
     parser.add_argument("--seeds", default="0,1,2,3")
     parser.add_argument("--gpus", default="0")

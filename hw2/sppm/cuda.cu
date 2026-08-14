@@ -99,7 +99,7 @@ struct RenderConfig {
 	double medium_density, medium_albedo, anisotropy, volume_density, volume_step;
 	double volume_emission, volume_radius, volume_x, volume_y, volume_z, dispersion;
 	double camera_x, camera_y, camera_z, direction_x, direction_y, direction_z, camera_offset, camera_scale;
-	int antialias, shadow_samples, enable_pbr, texture_filter, hybrid_samples, reconstruction_radius, reuse;
+	int antialias, shadow_samples, enable_pbr, texture_filter, hybrid_samples, reconstruction_radius, reuse, guided;
 	unsigned int seed;
 };
 
@@ -127,6 +127,14 @@ __device__ double random(unsigned int& state) {
 	state ^= state >> 17;
 	state ^= state << 5;
 	return (double(state) + .5) * 2.3283064365386963e-10;
+}
+
+__device__ double low_discrepancy(unsigned int index, int iteration, int dimension) {
+	const double generator[] = {.8566748838545, .7338918566271, .6287067210378, .5385972572236};
+	double shift = (scramble(config.seed * 0x85ebca6bu + iteration * 0x9e3779b9u +
+		dimension * 0x7feb352du) + .5) * 2.3283064365386963e-10;
+	double sample = (index + 1.) * generator[dimension] + shift;
+	return sample - floor(sample);
 }
 
 __device__ Vec curve_position(double parameter) {
@@ -688,7 +696,7 @@ __device__ bool scatter(
 	Vec normal = material.normal.dot(ray.direction) < 0 ? material.normal : -material.normal;
 	bool entering = hit.normal.dot(ray.direction) < 0;
 	if (material.color.maximum() < kEpsilon) return false;
-	if (depth > 5) {
+	if (depth > (config.guided && from_light ? 0 : 5)) {
 		double probability = fmin(.999, material.color.maximum());
 		if (random(state) >= probability) return false;
 		throughput = throughput / probability;
@@ -1117,6 +1125,12 @@ __global__ void visible_points_kernel(
 				throughput = throughput * (1 - object.mixed_specular);
 		}
 		if (material.reflection == DIFF) {
+			if (config.guided && config.shadow_samples > 0) {
+				Vec light = throughput.multiply(direct_lighting(hit, material, -ray.direction, state));
+				atomicAdd(&pixels[pixel].volume.x, light.x);
+				atomicAdd(&pixels[pixel].volume.y, light.y);
+				atomicAdd(&pixels[pixel].volume.z, light.z);
+			}
 			Vec normal = material.normal.dot(ray.direction) < 0 ? material.normal : -material.normal;
 			VisiblePoint point;
 			point.position = hit.position;
@@ -1196,8 +1210,33 @@ __global__ void photons_kernel(
 	}
 	EmitterData emitter = choose_emitter(state, false, emitter_sample);
 	Vec emitter_normal;
-	Vec origin = sample_light(emitter, emitter_normal, state);
-	RayData ray{origin, sample_diffuse(emitter_normal, state)};
+	Vec origin, direction;
+	if (config.guided && emitter.shape != kEmitterBox) {
+		double first = low_discrepancy(index, iteration, 0);
+		double second = low_discrepancy(index, iteration, 1);
+		if (emitter.shape == kEmitterSphere) {
+			double height = 1 - 2 * first, angle = 2 * kPi * second;
+			double radius = sqrt(fmax(0., 1 - height * height));
+			emitter_normal = Vec(radius * cos(angle), height, radius * sin(angle));
+			origin = emitter.position + emitter_normal * emitter.radius;
+		} else {
+			emitter_normal = emitter.normal;
+			Vec tangent = (fabs(emitter_normal.x) > .1 ? Vec(0, 1) : Vec(1)).cross(emitter_normal).normalized();
+			double radius = emitter.radius * sqrt(first), angle = 2 * kPi * second;
+			origin = emitter.position + tangent * (radius * cos(angle)) +
+				emitter_normal.cross(tangent) * (radius * sin(angle));
+		}
+		double angle = 2 * kPi * low_discrepancy(index, iteration, 2);
+		double radius = low_discrepancy(index, iteration, 3);
+		Vec tangent = (fabs(emitter_normal.x) > .1 ? Vec(0, 1) : Vec(1)).cross(emitter_normal).normalized();
+		direction = (tangent * (cos(angle) * sqrt(radius)) +
+			emitter_normal.cross(tangent) * (sin(angle) * sqrt(radius)) +
+			emitter_normal * sqrt(1 - radius)).normalized();
+	} else {
+		origin = sample_light(emitter, emitter_normal, state);
+		direction = sample_diffuse(emitter_normal, state);
+	}
+	RayData ray{origin, direction};
 	Vec power = emitter.emission * (emitter.area / emitter.probability);
 	int wavelength = -1;
 	for (int depth = 0; depth < kMaxBounces; ++depth) {
@@ -1213,7 +1252,8 @@ __global__ void photons_kernel(
 		}
 		Feature material = feature(hit, state);
 		Vec normal = material.normal.dot(ray.direction) < 0 ? material.normal : -material.normal;
-		if (material.reflection == DIFF)
+		if (material.reflection == DIFF && !(config.guided && config.shadow_samples > 0 &&
+			depth == 0 && emitter.direct_probability > 0))
 			collect(hit.position, normal, power, hit.object, points, buckets, mask, pixels, cell_size);
 		if (!scatter(ray, hit, material, power, state, depth, wavelength, true)) break;
 	}
@@ -1460,6 +1500,10 @@ bool parse_settings(int argc, char** argv, int start, RenderConfig& settings) {
 			settings.reuse = 1;
 			continue;
 		}
+		if (option == "--guided") {
+			settings.reuse = settings.guided = 1;
+			continue;
+		}
 		if (index + 1 >= argc) return false;
 		const char* value = argv[++index];
 		if (option == "--scene") {
@@ -1537,7 +1581,7 @@ int run(int argc, char** argv) {
 		fputs("         --shadow-samples N\n", stderr);
 		fputs("         --camera-origin X,Y,Z --camera-direction X,Y,Z --camera-offset F --camera-scale F\n", stderr);
 		fputs("         --aa N --roughness F --metallic F --bump F --dispersion F --nearest\n", stderr);
-		fputs("         --hybrid-samples N --reconstruction-radius N --reuse --seed N\n", stderr);
+		fputs("         --hybrid-samples N --reconstruction-radius N --reuse --guided --seed N\n", stderr);
 		fputs("         --medium-density F --medium-albedo F --anisotropy F\n", stderr);
 		fputs("         --volume-density F --volume-step F --volume-emission F --volume-radius F\n", stderr);
 		fputs("         --volume-center X,Y,Z\n", stderr);
@@ -1574,6 +1618,7 @@ int run(int argc, char** argv) {
 		fputs("Invalid rendering effect options\n", stderr);
 		return 1;
 	}
+	if (settings.guided && has_exposed_emitter()) settings.shadow_samples = std::max(1, settings.shadow_samples);
 
 	cudaDeviceProp device;
 	CUDA_CHECK(cudaGetDeviceProperties(&device, 0));
