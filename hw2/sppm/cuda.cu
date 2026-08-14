@@ -99,7 +99,7 @@ struct RenderConfig {
 	double medium_density, medium_albedo, anisotropy, volume_density, volume_step;
 	double volume_emission, volume_radius, volume_x, volume_y, volume_z, dispersion;
 	double camera_x, camera_y, camera_z, direction_x, direction_y, direction_z, camera_offset, camera_scale;
-	int antialias, shadow_samples, enable_pbr, texture_filter, hybrid_samples, reconstruction_radius, reuse, guided;
+	int antialias, shadow_samples, enable_pbr, texture_filter, hybrid_samples, reconstruction_radius, reuse, guided, cache;
 	unsigned int seed;
 };
 
@@ -129,9 +129,9 @@ __device__ double random(unsigned int& state) {
 	return (double(state) + .5) * 2.3283064365386963e-10;
 }
 
-__device__ double low_discrepancy(unsigned int index, int iteration, int dimension) {
+__device__ double low_discrepancy(unsigned int index, int iteration, int dimension, bool deterministic = false) {
 	const double generator[] = {.8566748838545, .7338918566271, .6287067210378, .5385972572236};
-	double shift = (scramble(config.seed * 0x85ebca6bu + iteration * 0x9e3779b9u +
+	double shift = (scramble((deterministic ? 0 : config.seed) * 0x85ebca6bu + iteration * 0x9e3779b9u +
 		dimension * 0x7feb352du) + .5) * 2.3283064365386963e-10;
 	double sample = (index + 1.) * generator[dimension] + shift;
 	return sample - floor(sample);
@@ -479,10 +479,16 @@ __device__ EmitterData choose_emitter(unsigned int& state, bool direct = false, 
 }
 
 __device__ Vec sample_light(EmitterData emitter, Vec& normal, unsigned int& state,
-	const Vec* shading_point = nullptr, double* area = nullptr) {
+	const Vec* shading_point = nullptr, double* area = nullptr, double first = -1, double second = -1) {
 	if (area) *area = emitter.area;
 	if (emitter.shape == kEmitterSphere) {
-		normal = sample_sphere(state);
+		if (first < 0) {
+			normal = sample_sphere(state);
+		} else {
+			double height = 1 - 2 * first, angle = 2 * kPi * second;
+			double radius = sqrt(fmax(0., 1 - height * height));
+			normal = Vec(radius * cos(angle), height, radius * sin(angle));
+		}
 		return emitter.position + normal * emitter.radius;
 	}
 	if (emitter.shape == kEmitterBox) {
@@ -532,7 +538,8 @@ __device__ Vec sample_light(EmitterData emitter, Vec& normal, unsigned int& stat
 		return emitter.position + Vec(random(state) * emitter.extent.x,
 			random(state) * emitter.extent.y, positive ? emitter.extent.z : 0);
 	}
-	double radius = emitter.radius * sqrt(random(state)), angle = 2 * kPi * random(state);
+	double radius = emitter.radius * sqrt(first < 0 ? random(state) : first);
+	double angle = 2 * kPi * (second < 0 ? random(state) : second);
 	normal = emitter.normal;
 	Vec tangent = (fabs(normal.x) > .1 ? Vec(0, 1) : Vec(1)).cross(normal).normalized();
 	return emitter.position + tangent * (radius * cos(angle)) +
@@ -612,7 +619,8 @@ __device__ bool shadow_visible(Vec origin, Vec destination, double& transmittanc
 	return true;
 }
 
-__device__ Vec direct_lighting(Hit hit, Feature material, Vec view, unsigned int& state) {
+__device__ Vec direct_lighting(Hit hit, Feature material, Vec view, unsigned int& state,
+	unsigned int sequence = UINT_MAX, unsigned int rotation = 0) {
 	if (config.shadow_samples <= 0 || emitter_count <= 0) return Vec();
 	Vec normal = material.normal.dot(view) > 0 ? material.normal : -material.normal;
 	Vec total;
@@ -621,7 +629,13 @@ __device__ Vec direct_lighting(Hit hit, Feature material, Vec view, unsigned int
 		if (emitter.direct_probability <= 0) continue;
 		Vec emitter_normal;
 		double area;
-		Vec target = sample_light(emitter, emitter_normal, state, &hit.position, &area);
+		double first = -1, second = -1;
+		if (sequence != UINT_MAX && emitter.shape != kEmitterBox) {
+			unsigned int index = sequence * config.shadow_samples + sample;
+			first = low_discrepancy(index, rotation, 0, true);
+			second = low_discrepancy(index, rotation, 1, true);
+		}
+		Vec target = sample_light(emitter, emitter_normal, state, &hit.position, &area, first, second);
 		Vec delta = target - hit.position;
 		double distance_squared = delta.squared_length();
 		Vec direction = delta / sqrt(distance_squared);
@@ -775,8 +789,10 @@ __device__ RayData camera_ray(int x, int y, int sx, int sy, int width, int heigh
 	Vec direction = Vec(config.direction_x, config.direction_y, config.direction_z).normalized();
 	Vec horizontal(width * .33 / height * config.camera_scale);
 	Vec vertical = Vec(width * .33 / height, 0, 0).cross(Vec(direction.x, 0, direction.z)).normalized() * .33;
-	double a = 2 * random(state), dx = a < 1 ? sqrt(a) : 2 - sqrt(2 - a);
-	double b = 2 * random(state), dy = b < 1 ? sqrt(b) : 2 - sqrt(2 - b);
+	double a = config.cache && config.aperture <= 0 ? 1 : 2 * random(state);
+	double b = config.cache && config.aperture <= 0 ? 1 : 2 * random(state);
+	double dx = a < 1 ? sqrt(a) : 2 - sqrt(2 - a);
+	double dy = b < 1 ? sqrt(b) : 2 - sqrt(2 - b);
 	Vec ray = (horizontal * ((x + (sx + dx) / config.antialias) / width - .5) +
 		vertical * ((y + (sy + dy) / config.antialias) / height - .5) + direction).normalized();
 	if (config.aperture > 0) {
@@ -825,10 +841,16 @@ __device__ Vec path_trace(RayData ray, unsigned int& state, double* directional_
 			break;
 		}
 		Feature material = feature(hit, state);
-		if (depth == 0 && primary_selector >= 0 && object.reflection == DIFF &&
-			object.mixed_specular > 0 && object.specular_mask < 0 && object.diffuse_mask < 0) {
-			material = feature(hit, state, false);
-			if (primary_selector < object.mixed_specular) material.reflection = SPEC;
+		if (depth == 0 && primary_selector >= 0) {
+			if (config.cache && object.diffuse_mask >= 0) {
+				material = feature(hit, state, false);
+				double diffuse = texture_sample(textures[object.diffuse_mask], material.u, material.v, false).x;
+				if (diffuse > 0) material.reflection = primary_selector < diffuse ? DIFF : SPEC;
+			} else if (object.reflection == DIFF && object.mixed_specular > 0 &&
+				object.specular_mask < 0 && object.diffuse_mask < 0) {
+				material = feature(hit, state, false);
+				if (primary_selector < object.mixed_specular) material.reflection = SPEC;
+			}
 		}
 		if (directional_events && material.reflection != DIFF && depth < 3)
 			*directional_events += material.reflection == REFR ? 1 : .5;
@@ -857,7 +879,7 @@ __global__ void surface_guides_kernel(SurfaceGuide* guides, int width, int heigh
 	int pixel = blockIdx.x * blockDim.x + threadIdx.x;
 	if (pixel >= width * height) return;
 	int x = pixel % width, y = pixel / width;
-	unsigned int state = scramble(pixel + 1 + config.seed * 0x9e3779b9u);
+	unsigned int state = scramble(pixel + 1 + (config.cache ? 0 : config.seed * 0x9e3779b9u));
 	SurfaceGuide guide{};
 	guide.object = -1;
 	int samples = 0;
@@ -872,7 +894,8 @@ __global__ void surface_guides_kernel(SurfaceGuide* guides, int width, int heigh
 			ObjectData object = objects[hit.object];
 			int classification = material.reflection == DIFF && object.reflection == DIFF
 				? (object.mixed_specular * config.antialias * config.antialias * 16 > 1 ? 1 : 0)
-				: material.reflection == REFR && object.reflection == REFR && object.texture < 0 ? 2 : -1;
+				: material.reflection == REFR && object.reflection == REFR && object.texture < 0 ? 2
+				: config.cache && object.reflection == REFR && object.diffuse_mask >= 0 ? 3 : -1;
 			if (classification < 0 ||
 				(samples && (hit.object != guide.object ||
 					classification != guide.mixed ||
@@ -942,7 +965,8 @@ __global__ void reconstruct_mixed_kernel(
 	int pixel = blockIdx.x * blockDim.x + threadIdx.x;
 	if (pixel >= width * height) return;
 	SurfaceGuide center = guides[pixel];
-	if (center.object < 0 || !center.mixed) {
+	if (center.object < 0 || !center.mixed || (config.cache && center.mixed == 3 &&
+		center.albedo.maximum() < .15 && luminance(input[pixel]) > .0015)) {
 		output[pixel] = input[pixel];
 		return;
 	}
@@ -984,6 +1008,50 @@ __global__ void reconstruct_mixed_kernel(
 	output[pixel] = total > 0 ? weighted / total : center_value;
 }
 
+__global__ void radiance_cache_kernel(
+	const Vec* input, Vec* output, const SurfaceGuide* guides, int width, int height, int stride
+) {
+	int pixel = blockIdx.x * blockDim.x + threadIdx.x;
+	if (pixel >= width * height) return;
+	SurfaceGuide center = guides[pixel];
+	if (center.object < 0 || (center.mixed == 3 && center.albedo.maximum() < .15 &&
+		luminance(input[pixel]) > .0015)) {
+		output[pixel] = input[pixel];
+		return;
+	}
+	Vec value = input[pixel], weighted;
+	bool factor = center.mixed <= 1;
+	Vec reference = factor ? Vec(value.x / fmax(.04, center.albedo.x),
+		value.y / fmax(.04, center.albedo.y), value.z / fmax(.04, center.albedo.z)) : value;
+	double total = 0;
+	int x = pixel % width, y = pixel / width;
+	for (int dy = -1; dy <= 1; ++dy)
+		for (int dx = -1; dx <= 1; ++dx) {
+			int nx = x + dx * stride, ny = y + dy * stride;
+			if (nx < 0 || nx >= width || ny < 0 || ny >= height) continue;
+			int index = ny * width + nx;
+			SurfaceGuide neighbor = guides[index];
+			if (neighbor.object != center.object || neighbor.mixed != center.mixed) continue;
+			double alignment = center.normal.dot(neighbor.normal);
+			double plane = fabs((neighbor.position - center.position).dot(center.normal));
+			if (alignment < .98 || plane > .09) continue;
+			Vec sample = input[index];
+			if (center.mixed == 3 && center.albedo.maximum() < .15 && luminance(sample) > .0015) continue;
+			double albedo = (neighbor.albedo - center.albedo).squared_length();
+			if (albedo > (factor ? .16 : .0025)) continue;
+			if (factor)
+				sample = Vec(sample.x / fmax(.04, neighbor.albedo.x),
+					sample.y / fmax(.04, neighbor.albedo.y), sample.z / fmax(.04, neighbor.albedo.z));
+			double difference = (sample - reference).squared_length();
+			double weight = (dx ? 1. : 2.) * (dy ? 1. : 2.) *
+				exp(-difference * (center.mixed == 2 ? 55 : center.mixed ? 30 : 8) - plane * 20);
+			weighted = weighted + sample * weight;
+			total += weight;
+		}
+	output[pixel] = total > 0 ? (factor ? center.albedo.multiply(weighted / total) :
+		weighted / total) : value;
+}
+
 __global__ void rare_specular_kernel(Vec* image, int width, int height, int samples) {
 	int pixel = blockIdx.x * blockDim.x + threadIdx.x;
 	if (pixel >= width * height) return;
@@ -993,7 +1061,7 @@ __global__ void rare_specular_kernel(Vec* image, int width, int height, int samp
 	if (!intersect(camera_ray(x, y, 0, 0, width, height, primary_state), true, primary)) return;
 	ObjectData surface = objects[primary.object];
 	if (surface.reflection != DIFF || surface.mixed_specular <= 0 ||
-		surface.mixed_specular * 16 * config.antialias * config.antialias > 1) return;
+		(!config.cache && surface.mixed_specular * 16 * config.antialias * config.antialias > 1)) return;
 	Vec reflected;
 	for (int sy = 0; sy < config.antialias; ++sy)
 		for (int sx = 0; sx < config.antialias; ++sx)
@@ -1021,7 +1089,10 @@ __global__ void hybrid_specular_kernel(Vec* image, int width, int height, int sa
 	Hit first;
 	if (!intersect(primary, true, first)) return;
 	Feature primary_material = feature(first, primary_state, false);
+	bool stratified = primary_material.reflection == DIFF ||
+		(config.cache && objects[first.object].diffuse_mask >= 0);
 	if (primary_material.reflection == DIFF) {
+		if (config.cache) return;
 		ObjectData object = objects[first.object];
 		if (object.mixed_specular * 16 * config.antialias * config.antialias <= 1) return;
 	}
@@ -1034,7 +1105,7 @@ __global__ void hybrid_specular_kernel(Vec* image, int width, int height, int sa
 			for (int sample = 0; sample < pilot; ++sample) {
 				double directional;
 				RayData ray = camera_ray(x, y, sx, sy, width, height, state);
-				double selector = config.reuse && primary_material.reflection == DIFF
+				double selector = config.reuse && stratified
 					? (sample + random(state)) / pilot : -1;
 				Vec value = path_trace(ray, state, &directional, selector);
 				events += directional > 0;
@@ -1054,7 +1125,7 @@ __global__ void hybrid_specular_kernel(Vec* image, int width, int height, int sa
 		for (int sx = 0; sx < config.antialias; ++sx)
 			for (int sample = 0; sample < extra; ++sample) {
 				RayData ray = camera_ray(x, y, sx, sy, width, height, state);
-				double selector = config.reuse && primary_material.reflection == DIFF
+				double selector = config.reuse && stratified
 					? (sample + random(state)) / extra : -1;
 				color = color + path_trace(ray, state, nullptr, selector);
 			}
@@ -1118,15 +1189,16 @@ __global__ void visible_points_kernel(
 		}
 		Feature material = feature(hit, state);
 		if (depth == 0 && config.hybrid_samples > 0 && object.reflection == DIFF &&
-			object.mixed_specular > 0 && object.mixed_specular *
-				16 * config.antialias * config.antialias <= 1) {
+			object.mixed_specular > 0 && (config.cache || object.mixed_specular *
+				16 * config.antialias * config.antialias <= 1)) {
 			material = feature(hit, state, false);
 			if (material.reflection == DIFF)
 				throughput = throughput * (1 - object.mixed_specular);
 		}
 		if (material.reflection == DIFF) {
 			if (config.guided && config.shadow_samples > 0) {
-				Vec light = throughput.multiply(direct_lighting(hit, material, -ray.direction, state));
+				unsigned int sequence = config.cache ? (iteration - 1) * subpixels + subpixel : UINT_MAX;
+				Vec light = throughput.multiply(direct_lighting(hit, material, -ray.direction, state, sequence, pixel));
 				atomicAdd(&pixels[pixel].volume.x, light.x);
 				atomicAdd(&pixels[pixel].volume.y, light.y);
 				atomicAdd(&pixels[pixel].volume.z, light.z);
@@ -1504,6 +1576,10 @@ bool parse_settings(int argc, char** argv, int start, RenderConfig& settings) {
 			settings.reuse = settings.guided = 1;
 			continue;
 		}
+		if (option == "--cache") {
+			settings.reuse = settings.guided = settings.cache = 1;
+			continue;
+		}
 		if (index + 1 >= argc) return false;
 		const char* value = argv[++index];
 		if (option == "--scene") {
@@ -1581,7 +1657,7 @@ int run(int argc, char** argv) {
 		fputs("         --shadow-samples N\n", stderr);
 		fputs("         --camera-origin X,Y,Z --camera-direction X,Y,Z --camera-offset F --camera-scale F\n", stderr);
 		fputs("         --aa N --roughness F --metallic F --bump F --dispersion F --nearest\n", stderr);
-		fputs("         --hybrid-samples N --reconstruction-radius N --reuse --guided --seed N\n", stderr);
+		fputs("         --hybrid-samples N --reconstruction-radius N --reuse --guided --cache --seed N\n", stderr);
 		fputs("         --medium-density F --medium-albedo F --anisotropy F\n", stderr);
 		fputs("         --volume-density F --volume-step F --volume-emission F --volume-radius F\n", stderr);
 		fputs("         --volume-center X,Y,Z\n", stderr);
@@ -1644,7 +1720,13 @@ int run(int argc, char** argv) {
 		CUDA_CHECK(cudaGetLastError());
 	} else {
 		double radius = atof(argv[6]), alpha = atof(argv[7]);
-		int photons = std::max(1, int(ceil(atof(argv[5]) * count)));
+		double density = atof(argv[5]);
+		if (settings.cache) {
+			double scale = fmin(1., sqrt(640. * 360 / count));
+			radius *= fmax(.24, scale);
+			density *= scale;
+		}
+		int photons = std::max(1, int(ceil(density * count)));
 		size_t visible_count = size_t(count) * settings.antialias * settings.antialias;
 		if (visible_count > size_t(UINT_MAX) / 2) {
 			fputs("Image has too many visible points for the CUDA spatial hash\n", stderr);
@@ -1722,6 +1804,19 @@ int run(int argc, char** argv) {
 					image = reconstructed;
 				}
 			}
+		}
+		if (settings.cache && guides) {
+			Vec* cached;
+			CUDA_CHECK(cudaMalloc(&cached, size_t(count) * sizeof(Vec)));
+			int footprint = std::max(1, settings.reconstruction_radius *
+				std::max(1, width / (has_exposed_emitter() ? 160 : 320)));
+			for (int stride = 1; stride <= footprint; stride <<= 1) {
+				radiance_cache_kernel<<<(count + threads - 1) / threads, threads>>>(
+					image, cached, guides, width, height, stride);
+				CUDA_CHECK(cudaGetLastError());
+				std::swap(image, cached);
+			}
+			CUDA_CHECK(cudaFree(cached));
 		}
 		if (guides) CUDA_CHECK(cudaFree(guides));
 		CUDA_CHECK(cudaFree(visible));

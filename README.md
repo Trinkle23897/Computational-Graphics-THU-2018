@@ -43,19 +43,19 @@ OpenMP: 2, GPU: 5
 其他额外效果: 凹凸贴图、体积光等: [5, ?]
 ```
 
-代码基于 smallpt，实现路径追踪（PT）、随机渐进式光子映射（SPPM）、CUDA Hybrid SPPM、分层复用 Hybrid SPPM，以及直接光分解和低差异引导的 Guided Hybrid SPPM。原始花瓶场景与原 `balls` 分支的玻璃球场景现在都在 `master`，通过 `--scene vase` / `--scene balls` 直接切换，不需要 checkout 其他分支。旋转 Bezier 曲面、彩色纹理、镜面反射、玻璃折射和光源构图均保留原始设定。课程报告见 [hw2/report.pdf](hw2/report.pdf)。
+代码基于 smallpt，实现路径追踪（PT）、随机渐进式光子映射（SPPM）、CUDA Hybrid SPPM、分层复用 Hybrid SPPM、低差异 Guided Hybrid SPPM，以及面向原生 4K 的分辨率自适应辐照度缓存。原始花瓶场景与原 `balls` 分支的玻璃球场景都在 `master`，通过 `--scene vase` / `--scene balls` 直接切换。旋转 Bezier 曲面、彩色纹理、镜面反射、玻璃折射和光源构图均保留原始设定。课程报告见 [hw2/report.pdf](hw2/report.pdf)。
 
 ### 直接渲染结果
 
-下图均为渲染器直接输出的原始颜色，仅将 PPM 无损转换成 PNG，没有 Photoshop 调色、改曝光或手工修图。
+下图均为 3840×2160 原生 4K 直接渲染的原始颜色，仅将 PPM 无损转换成 PNG，没有降分辨率、Photoshop 调色、改曝光或手工修图。
 
 **花瓶：**
 
-![花瓶场景：CUDA Guided Hybrid SPPM 直接渲染](docs/render/vase-guided-sppm.png)
+![花瓶场景：原生 4K 分辨率自适应辐照度缓存直接渲染](docs/render/vase-cache-4k.png)
 
 **Balls：**
 
-![Balls 场景：CUDA Guided Hybrid SPPM 直接渲染](docs/render/balls-guided-sppm.png)
+![Balls 场景：原生 4K 分辨率自适应辐照度缓存直接渲染](docs/render/balls-cache-4k.png)
 
 ### 新算法：Guided Hybrid SPPM
 
@@ -84,6 +84,41 @@ $$L_o = L_{\mathrm{diffuse,SPPM}} + L_{\mathrm{specular,PT}} + L_{\mathrm{direct
 3. **只对光子提前做无偏 Russian roulette。** 摄像机侧的反射、玻璃和花瓶高光仍完整追踪；低贡献光子从第一跳后开始按材质反照率决定是否继续，存活路径乘回 $1/p_{\mathrm{survive}}$。改变的是路径长度的计算成本，不是光传输积分或场景颜色。
 
 光源是否外露、低差异序列以及 Russian roulette 生存概率都由场景几何和材质自动决定，不识别特定场景名称、固定颜色或贴图文件。constant memory、可见对象 bitmask、把大球近似成平面，以及对玻璃分支强行分层也都做过实测，但分别造成访存串行化、额外同步或方差升高，因此没有放进最终实现。
+
+#### 原生 4K：分辨率自适应辐照度缓存
+
+把原来的 `--guided` 直接从 640×360 提升到 3840×2160 后，16 轮花瓶需要 268.420 s，综合 RMS 仍为 0.636；balls 需要 116.867 s，RMS 为 0.723。瓶颈不是 GPU 光线投射不够快，而是固定世界坐标光子半径和固定每像素光子数同时沿用：像素数增加时，每个光子覆盖的相机可见点也增加，光子汇合成本接近 $N_{\mathrm{photon}}N_{\mathrm{visible}}r^2$，远比像素数增长得更快。
+
+`--cache` 在 Guided Hybrid 的物理传输分解之上增加五个变化：
+
+1. **按分辨率控制光子支持域。** 令 $s=\min(1,\sqrt{640\cdot360/(WH)})$，自动使用 $r'=r\max(0.24,s)$、$\rho'=\rho s$，避免高分辨率下对同一世界坐标邻域做二次增长的重复查询。
+2. **把混合 BSDF 明确拆成两个估计量。** 漫反射分支始终交给 SPPM，并乘以 $1-p_{\mathrm{specular}}$；镜面分支由独立相机路径估计，再乘回 $p_{\mathrm{specular}}$。因此地板倒影、瓷器高光和玻璃反射不参与漫反射缓存，不会被光子半径涂开。
+3. **缓存可复用的辐照度，而不是直接糊 RGB。** 先除掉纹理反照率，再用跨度为 1、2、4、8……像素的几何约束 à-trous 层级复用照明，最后恢复原像素纹理。物体 ID、法线、世界平面距离、反照率、材质类型和亮度差异共同限制复用；有镜面高光的黑色条纹像素直接绕过缓存。
+4. **把可确定部分从随机变量里拿掉。** 针孔相机使用稳定的分层子像素位置，面积光直接连接使用逐像素确定性低差异序列；开启真实光圈时仍保留随机透镜采样。光子和玻璃路径继续使用独立随机种子，不把实际采样方差藏进固定序列。
+5. **按光源可见性分配缓存尺度和采样预算。** 外露面积光场景可以使用更宽的漫反射辐照度 footprint；被玻璃包住的光源保留更紧的尺度，防止球面倒影和折射焦散发生亮度偏移。低迭代档位适当提高每轮光子预算，减少启动镜面路径以后的额外循环。核心判断来自场景几何、材质和光源遮挡，不依赖 `vase`、`balls` 等场景名称。
+
+辐照度空间复用是明确的**有偏降方差**，不是逐像素无偏 Monte Carlo；确定性采样也可能保留跨 seed 不可见的系统误差。因此除了四个独立 seed 的真实 RMS，还同时检查场景原始亮度、花纹梯度、玻璃边界和地板倒影，拒绝把画面调暗、磨平或者改变场景来获得好看的数字。
+
+**3840×2160，一张 NVIDIA H200，CUDA event 统计 GPU kernel：**
+
+| 场景 | 算法 | 迭代 | 独立 seed | GPU kernel | 综合 RMS |
+| --- | --- | ---: | ---: | ---: | ---: |
+| 花瓶 | Guided Hybrid | 8 | 2 | 135.841 s | 0.859 |
+| 花瓶 | Guided Hybrid | 16 | 2 | 268.420 s | 0.636 |
+| 花瓶 | 分辨率自适应缓存 | 8 | 4 | 23.269 s | 0.460 |
+| 花瓶 | 分辨率自适应缓存 | 16 | 4 | 32.389 s | 0.348 |
+| 花瓶 | **分辨率自适应缓存** | **24** | **4** | **41.438 s** | **0.292** |
+| Balls | Guided Hybrid | 8 | 2 | 60.778 s | 0.976 |
+| Balls | Guided Hybrid | 16 | 2 | 116.867 s | 0.723 |
+| Balls | **分辨率自适应缓存：极速** | **8** | **4** | **11.441 s** | **0.269** |
+| Balls | **分辨率自适应缓存** | **16** | **4** | **12.720 s** | **0.237** |
+| Balls | 分辨率自适应缓存 | 24 | 4 | 14.366 s | 0.213 |
+
+花瓶 24 轮的白瓷 / 蓝花 / 整体 / 彩虹 / 地板 RMS 分别为 **0.464 / 0.226 / 0.273 / 0.271 / 0.111**；balls 16 轮的背景 / 地板 / 倒影 / 玻璃 / 条纹 RMS 分别为 **0.253 / 0.264 / 0.209 / 0.318 / 0.031**。彩色条纹边缘梯度由 Guided 的 100.63 变为 100.74，白瓷边缘由 144.23 变为 144.44；balls 背景亮度为 49.32，旧算法为 49.34，没有通过统一压暗来隐藏噪点。
+
+和上一代 4K Guided Hybrid 的 16 轮相比，花瓶在噪声下降的同时约快 **6.48×**；balls 的 8 轮极速档快 **10.21×**，16 轮低噪档快 **9.19×**。按 $\sigma^2t$ 计算，花瓶和 balls 低噪档的方差—时间效率分别提高约 **31×** 和 **86×**。历史 Guided 基线使用两个独立 seed，新算法使用要求更严格的四个独立 seed；完整逐区域亮度、边缘与噪声见 [docs/render/convergence-4k.csv](docs/render/convergence-4k.csv)。
+
+![原生 4K Guided Hybrid 与分辨率自适应辐照度缓存的独立 seed 收敛曲线](docs/render/convergence-4k.png)
 
 #### 同场景渲染对比
 
@@ -222,7 +257,7 @@ nvcc -O3 -arch=sm_90 -std=c++17 cuda.cu -o render-cuda
 ./render-cuda 640 360 balls-pt.ppm 32 --scene balls
 ```
 
-5. 使用同一个二进制渲染普通 SPPM、旧版 Hybrid，或最新的 Guided Hybrid：
+5. 使用同一个二进制渲染普通 SPPM、Guided Hybrid，或最新的原生 4K 分辨率自适应缓存：
 
 ```bash
 # 花瓶：普通 SPPM
@@ -239,28 +274,50 @@ nvcc -O3 -arch=sm_90 -std=c++17 cuda.cu -o render-cuda
   --scene balls --nearest --hybrid-samples 2048 \
   --reconstruction-radius 8 --guided
 
+# 原生 4K 花瓶：24 轮；保留白瓷高光、蓝花纹和地板星星
+./render-cuda 3840 2160 vase-cache-4k.ppm 24 16 .5 1 \
+  --scene vase --nearest --shadow-samples 3 \
+  --hybrid-samples 64 --reconstruction-radius 4 --cache
+
+# 原生 4K Balls：16 轮；保留彩色条纹、黑球高光和玻璃焦散
+./render-cuda 3840 2160 balls-cache-4k.ppm 16 8 .5 1 \
+  --scene balls --nearest --hybrid-samples 64 \
+  --reconstruction-radius 8 --cache
+
+# 原生 4K Balls 极速档：8 轮、每轮 10 个光子
+./render-cuda 3840 2160 balls-cache-fast-4k.ppm 8 10 .5 1 \
+  --scene balls --nearest --hybrid-samples 64 \
+  --reconstruction-radius 8 --cache
+
 # 8K 花瓶；高分辨率下相应缩小光子汇合半径
 ./render-cuda 7680 4320 vase-8k.ppm 64 1 .1 1 \
   --scene vase --nearest --hybrid-samples 384 \
   --reconstruction-radius 6 --guided
 ```
 
-前四个位置参数表示 `宽度 高度 输出文件 每子像素采样数`，对应 PT；再提供 `每像素光子数 初始半径 alpha` 就切换到 SPPM。`--reuse` 打开分层复用算法，`--guided` 在其基础上进一步启用直接光分解、低差异发光和无偏光子路径终止；两者都不加则保留原来的 Hybrid SPPM。CUDA SPPM 只输出最终结果。多卡机器用 `CUDA_VISIBLE_DEVICES=0` 指定 GPU。
+前四个位置参数表示 `宽度 高度 输出文件 每子像素采样数`，对应 PT；再提供 `每像素光子数 初始半径 alpha` 就切换到 SPPM。`--reuse` 打开分层复用，`--guided` 增加直接光分解和低差异发光，`--cache` 进一步开启分辨率自适应辐照度缓存；都不加则保留原来的 Hybrid SPPM。CUDA SPPM 只输出最终结果。多卡机器用 `CUDA_VISIBLE_DEVICES=0` 指定 GPU。
 
 6. 可选：无损转换成网页可直接显示的 PNG：
 
 ```bash
 python3 -m pip install Pillow
-python3 -c 'from PIL import Image; Image.open("vase-guided.ppm").save("vase-guided.png")'
+python3 -c 'from PIL import Image; Image.open("vase-cache-4k.ppm").save("vase-cache-4k.png")'
 ```
 
-7. 复现实验；下面会渲染两个场景、五种算法、五个迭代档位、四个随机种子，共 200 张图：
+7. 复现实验；第一个命令复现历史 640×360 五算法基线，第二个命令复现上面的原生 4K 缓存收敛曲线：
 
 ```bash
 python3 -m pip install numpy Pillow scipy matplotlib
 python3 benchmark.py --binary ./render-cuda \
+  --algorithms pt,sppm,hybrid,reuse,guided \
   --iterations 4,8,16,32,64 --seeds 0,1,2,3 \
   --gpus 0,1,2,3,4,5,6,7 --output /tmp/sppm-convergence
+
+# 原生 4K：两个场景、三档迭代、四个独立 seed
+python3 benchmark.py --binary ./render-cuda --algorithms cache \
+  --iterations 8,16,24 --seeds 0,1,2,3 \
+  --width 3840 --height 2160 \
+  --gpus 0,1,2,3,4,5,6,7 --output /tmp/sppm-4k-cache
 
 # 单卡把 --gpus 改成 0；快速验证可以缩短为：
 python3 benchmark.py --binary ./render-cuda \
@@ -276,6 +333,7 @@ python3 benchmark.py --binary ./render-cuda \
 | 场景 | `--scene vase` / `--scene balls` | 同时切换场景、光源和默认相机 |
 | 分层复用 | `--reuse` | 光源与材质分层、菲涅耳重要性采样、几何约束复用和 9-cell 平面光子查询 |
 | 传输引导 | `--guided` | 包含 `--reuse`，另加直接光 NEE 分解、四维低差异光子发射和无偏路径终止 |
+| 分辨率自适应缓存 | `--cache` | 包含 `--guided`，另加自适应光子支持域、混合 BSDF 分解和几何约束辐照度缓存 |
 | 镜面分层 | `--hybrid-samples 2048` | 独立采样稀有镜面和折射，保留真实 BSDF 权重 |
 | 引导重建 | `--reconstruction-radius 4` | 根据物体、法线、反照率、深度和局部方差压低随机噪声 |
 | 独立随机序列 | `--seed 7` | 让相机、光子和材质采样可复现 |
