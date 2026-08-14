@@ -36,7 +36,7 @@ def run_job(job, options, directory):
         photons = "5" if scene == "vase" else "8"
         if cached and options.width >= 1920:
             photons = "16" if scene == "vase" else "10" if iterations <= 8 else "8"
-        command += [str(iterations), photons, ".5", "1"]
+        command += [str(iterations), photons, str(getattr(options, "photon_radius", .5)), "1"]
     command += ["--scene", scene, "--nearest", "--seed", str(seed)]
     if algorithm in ("hybrid", "reuse", "guided") or cached:
         samples = iterations * 16
@@ -163,7 +163,7 @@ def plot(summaries, destination):
                          if metric == "total_error" else "Independent-seed noise RMS")
                 axis.set_title(scene.capitalize())
                 axis.grid(alpha=.2, which="both")
-    axes[1, 1].legend(frameon=False, fontsize=8)
+    axes[1, 1].legend(frameon=False, fontsize=8, loc="center left", bbox_to_anchor=(1.01, .5))
     figure.savefig(destination, dpi=180, facecolor="white")
     plt.close(figure)
 
@@ -178,9 +178,12 @@ def main():
     parser.add_argument("--gpus", default="0")
     parser.add_argument("--width", type=int, default=640)
     parser.add_argument("--height", type=int, default=360)
+    parser.add_argument("--photon-radius", type=float, default=.5)
     parser.add_argument("--reference", action="append", default=[], metavar="SCENE=IMAGE",
                         help="measure systematic bias against a converged reference image")
     options = parser.parse_args()
+    if options.photon_radius <= 0:
+        parser.error("--photon-radius must be positive")
     options.binary = options.binary.resolve()
     options.output = options.output.resolve()
     options.output.mkdir(parents=True, exist_ok=True)

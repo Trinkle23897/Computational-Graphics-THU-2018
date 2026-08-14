@@ -83,20 +83,34 @@ $$\hat L=C+\mathcal U_{\mathrm{compatible}}[P-C].$$
 
 ### 性能与收敛对比
 
-测试使用一张 NVIDIA H200。随机噪声 $\sigma$ 由独立随机种子估计；系统性偏差 $b$ 对比同场景高采样 PT 参考图；综合误差为 $\sqrt{\sigma^2+b^2}$。GPU 时间只统计 CUDA kernel。
+原始 PT 成图来自 GitHub Releases；`100000` 表示每个子像素的路径采样次数。历史图片只有单个结果，且部分使用不同场景版本；噪声通过平坦区域的局部高频残差估计，不能等同于多随机种子的实测 RMS。
+
+| 场景 | 原始 PT 成图 | 分辨率 | 每子像素采样 | 单图噪声估计 |
+| --- | --- | --- | ---: | ---: |
+| 花瓶 | [nomosaic_16k.png](https://github.com/Trinkle23897/Computational-Graphics-THU-2018/releases/download/result/nomosaic_16k.png) | 7680×4320 | 100000 | 0.215 |
+| 花瓶 | [vase_4k_10w.png](https://github.com/Trinkle23897/Computational-Graphics-THU-2018/releases/download/result/vase_4k_10w.png) | 3840×2160 | 100000 | 0.239 |
+| Balls | [ball_new_10w.png](https://github.com/Trinkle23897/Computational-Graphics-THU-2018/releases/download/result/ball_new_10w.png) | 3840×2160 | 100000 | 0.477 |
+| Balls | [ball_raw.png](https://github.com/Trinkle23897/Computational-Graphics-THU-2018/releases/download/result/ball_raw.png) | 3840×2160 | 未记录 | 0.287 |
+
+下面所有算法都使用一张 NVIDIA H200 实测。随机噪声 $\sigma$ 由独立随机种子估计；系统性偏差 $b$ 对比同场景高采样 PT 参考图；综合误差为 $\sqrt{\sigma^2+b^2}$。GPU 时间只统计 CUDA kernel。
 
 **3840×2160 原生 4K：**
 
-| 场景 | 算法 | 迭代 | GPU 时间 | 随机噪声 $\sigma$ | 系统偏差 $b$ | 综合误差 |
+| 场景 | 算法 | 采样 / 轮次 | GPU 时间 | 随机噪声 $\sigma$ | 系统偏差 $b$ | 综合误差 |
 | --- | --- | ---: | ---: | ---: | ---: | ---: |
-| 花瓶 | Guided Hybrid | 16 | 268.420 s | 0.636 | — | — |
-| 花瓶 | **路径自适应 Hybrid** | **24** | **41.697 s** | **0.292** | — | — |
-| Balls | Guided Hybrid | 16 | 116.867 s | 0.723 | 1.617 | 1.771 |
-| Balls | **路径自适应 Hybrid** | **24** | **74.196 s** | **0.460** | **0.265** | **0.531** |
-| Balls | **路径自适应 Hybrid HQ** | **24** | **119.768 s** | **0.350** | **0.240** | **0.424** |
-| Balls | **路径自适应 Hybrid Ultra** | **24** | **208.575 s** | **0.292** | **0.234** | **0.374** |
+| 花瓶 | PT | 128 / 子像素 | 74.428 s | 17.175 | — | — |
+| 花瓶 | SPPM | 16 轮 | 95.526 s | 2.684 | — | — |
+| 花瓶 | Guided Hybrid | 16 轮 | 268.420 s | 0.636 | — | — |
+| 花瓶 | **路径自适应 Hybrid** | **24 轮** | **41.697 s** | **0.292** | — | — |
+| Balls | PT | 128 / 子像素 | 37.225 s | 12.258 | 1.004 | 12.299 |
+| Balls | PT | 1024 / 子像素 | 314.161 s | 4.236 | 0.024 | 4.236 |
+| Balls | SPPM | 16 轮 | 69.789 s | 4.070 | 1.475 | 4.329 |
+| Balls | Guided Hybrid | 16 轮 | 116.867 s | 0.723 | 1.617 | 1.771 |
+| Balls | **路径自适应 Hybrid** | **24 轮** | **74.196 s** | **0.460** | **0.265** | **0.531** |
+| Balls | **路径自适应 Hybrid HQ** | **24 轮** | **119.768 s** | **0.350** | **0.240** | **0.424** |
+| Balls | **路径自适应 Hybrid Ultra** | **24 轮** | **208.575 s** | **0.292** | **0.234** | **0.374** |
 
-花瓶在噪声从 0.636 降至 0.292 的同时，速度提升 **6.44 倍**。Balls 标准档速度提升 **1.58 倍**，综合误差从 1.771 降至 0.531；Ultra 档进一步降低噪声和偏差。完整数据见 [docs/render/convergence-4k.csv](docs/render/convergence-4k.csv)。
+普通 SPPM 使用 0.12 的光子半径，与新算法自动选择的 4K 半径一致。花瓶的新算法比 PT 快 **1.78 倍**、比普通 SPPM 快 **2.29 倍**，噪声分别降低 **58.82 倍**和 **9.19 倍**。Balls 标准档比 1024 spp 的 PT 快 **4.23 倍**、噪声降低 **9.21 倍**；比普通 SPPM 多花 6.3% 时间，但综合误差从 4.329 降至 0.531。完整数据见 [docs/render/convergence-4k.csv](docs/render/convergence-4k.csv)。
 
 ![4K 渲染随机噪声与物理偏差收敛曲线](docs/render/convergence-4k.png)
 
@@ -181,8 +195,12 @@ g++ -O3 -fopenmp main.cpp -o render
 ```bash
 python3 -m pip install numpy Pillow scipy matplotlib
 python3 benchmark.py --binary ./render-cuda \
+  --algorithms pt,sppm --iterations 16 --seeds 0,1,2,3 --photon-radius .12 \
+  --width 3840 --height 2160 --gpus 0 --output /tmp/sppm-4k-baselines
+python3 benchmark.py --binary ./render-cuda \
   --algorithms cache,cache_hq,cache_ultra --iterations 24 \
-  --seeds 0,1,2,3 --width 3840 --height 2160 --gpus 0
+  --seeds 0,1,2,3 --width 3840 --height 2160 --gpus 0 \
+  --output /tmp/sppm-4k-hybrid
 ```
 
 添加 `--reference balls=/path/to/converged-balls-pt.png` 可以同时计算相对于高采样 PT 参考图的系统偏差。
