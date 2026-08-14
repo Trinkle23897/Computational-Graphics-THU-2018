@@ -407,9 +407,11 @@ __device__ bool refract(Vec direction, Vec normal, double from, double to, Vec& 
 	return true;
 }
 
-__device__ Vec sample_diffuse(Vec normal, unsigned int& state) {
-	double angle = 2 * kPi * random(state);
-	double radius = random(state);
+__device__ Vec sample_diffuse(
+	Vec normal, unsigned int& state, double first = -1, double second = -1
+) {
+	double angle = 2 * kPi * (first < 0 ? random(state) : first);
+	double radius = second < 0 ? random(state) : second;
 	Vec tangent = (fabs(normal.x) > .1 ? Vec(0, 1) : Vec(1)).cross(normal).normalized();
 	Vec bitangent = normal.cross(tangent);
 	return (tangent * (cos(angle) * sqrt(radius)) +
@@ -705,7 +707,7 @@ __device__ Vec march_volume(
 
 __device__ bool scatter(
 	RayData& ray, Hit hit, Feature material, Vec& throughput, unsigned int& state, int depth, int& wavelength,
-	bool from_light = false
+	bool from_light = false, double first = -1, double second = -1
 ) {
 	Vec normal = material.normal.dot(ray.direction) < 0 ? material.normal : -material.normal;
 	bool entering = hit.normal.dot(ray.direction) < 0;
@@ -718,7 +720,7 @@ __device__ bool scatter(
 	if (material.reflection == DIFF) {
 		if (!config.enable_pbr) {
 			throughput = throughput.multiply(material.color);
-			ray = RayData{hit.position, sample_diffuse(normal, state)};
+			ray = RayData{hit.position, sample_diffuse(normal, state, first, second)};
 			return true;
 		}
 		Vec view = -ray.direction;
@@ -809,7 +811,7 @@ __device__ RayData camera_ray(int x, int y, int sx, int sy, int width, int heigh
 }
 
 __device__ Vec path_trace(RayData ray, unsigned int& state, double* directional_events = nullptr,
-	double primary_selector = -1) {
+	double primary_selector = -1, double first = -1, double second = -1) {
 	Vec throughput(1, 1, 1), result;
 	int wavelength = -1;
 	bool specular_path = true;
@@ -841,23 +843,18 @@ __device__ Vec path_trace(RayData ray, unsigned int& state, double* directional_
 			break;
 		}
 		Feature material = feature(hit, state);
-		if (depth == 0 && primary_selector >= 0) {
-			if (config.cache && object.diffuse_mask >= 0) {
-				material = feature(hit, state, false);
-				double diffuse = texture_sample(textures[object.diffuse_mask], material.u, material.v, false).x;
-				if (diffuse > 0) material.reflection = primary_selector < diffuse ? DIFF : SPEC;
-			} else if (object.reflection == DIFF && object.mixed_specular > 0 &&
-				object.specular_mask < 0 && object.diffuse_mask < 0) {
-				material = feature(hit, state, false);
-				if (primary_selector < object.mixed_specular) material.reflection = SPEC;
-			}
+		if (depth == 0 && primary_selector >= 0 && object.reflection == DIFF &&
+			object.mixed_specular > 0 && object.specular_mask < 0 && object.diffuse_mask < 0) {
+			material = feature(hit, state, false);
+			if (primary_selector < object.mixed_specular) material.reflection = SPEC;
 		}
 		if (directional_events && material.reflection != DIFF && depth < 3)
 			*directional_events += material.reflection == REFR ? 1 : .5;
 		if (material.reflection == DIFF)
 			result = result + throughput.multiply(direct_lighting(hit, material, -ray.direction, state));
 		specular_path = material.reflection != DIFF;
-		if (!scatter(ray, hit, material, throughput, state, depth, wavelength)) break;
+		if (!scatter(ray, hit, material, throughput, state, depth, wavelength, false,
+			depth == 0 ? first : -1, depth == 0 ? second : -1)) break;
 	}
 	return result;
 }
@@ -873,6 +870,31 @@ __global__ void path_trace_kernel(Vec* image, int width, int height, int samples
 			for (int sample = 0; sample < samples; ++sample)
 				color = color + path_trace(camera_ray(x, y, sx, sy, width, height, state), state);
 	image[pixel] = color / (double(config.antialias * config.antialias) * samples);
+}
+
+__global__ void control_path_kernel(Vec* image, int width, int height, int samples) {
+	int pixel = blockIdx.x * blockDim.x + threadIdx.x;
+	if (pixel >= width * height) return;
+	int x = pixel % width, y = pixel / width;
+	unsigned int state = scramble(pixel + 1 + config.seed * 0x9e3779b9u), probe = state;
+	Hit hit;
+	if (!intersect(camera_ray(x, y, 0, 0, width, height, probe), true, hit) ||
+		objects[hit.object].reflection != DIFF) {
+		image[pixel] = Vec();
+		return;
+	}
+	Vec color;
+	int subpixels = config.antialias * config.antialias;
+	for (int sy = 0; sy < config.antialias; ++sy)
+		for (int sx = 0; sx < config.antialias; ++sx)
+			for (int sample = 0; sample < samples; ++sample) {
+				unsigned int index = sample * subpixels + sy * config.antialias + sx;
+				double selector = (sample + random(state)) / samples;
+				RayData ray = camera_ray(x, y, sx, sy, width, height, state);
+				color = color + path_trace(ray, state, nullptr, selector,
+					low_discrepancy(index, pixel, 0), low_discrepancy(index, pixel, 1));
+			}
+	image[pixel] = color / (double(subpixels) * samples);
 }
 
 __global__ void surface_guides_kernel(SurfaceGuide* guides, int width, int height) {
@@ -916,6 +938,75 @@ __global__ void surface_guides_kernel(SurfaceGuide* guides, int width, int heigh
 		guide.albedo = guide.albedo / samples;
 	}
 	guides[pixel] = guide;
+}
+
+__global__ void control_residual_kernel(
+	Vec* coarse, const Vec* image, const SurfaceGuide* guides,
+	int width, int height, int coarse_width, int coarse_height
+) {
+	int pixel = blockIdx.x * blockDim.x + threadIdx.x;
+	if (pixel >= coarse_width * coarse_height) return;
+	int x = pixel % coarse_width, y = pixel / coarse_width;
+	int left = x * width / coarse_width, right = (x + 1) * width / coarse_width;
+	int bottom = y * height / coarse_height, top = (y + 1) * height / coarse_height;
+	SurfaceGuide center = guides[((bottom + top) / 2) * width + (left + right) / 2];
+	if (center.object < 0 || center.mixed > 1) {
+		coarse[pixel] = Vec();
+		return;
+	}
+	Vec average;
+	int count = 0;
+	for (int iy = bottom; iy < top; ++iy)
+		for (int ix = left; ix < right; ++ix) {
+			int index = iy * width + ix;
+			SurfaceGuide guide = guides[index];
+			if (guide.object != center.object || guide.mixed != center.mixed ||
+				center.normal.dot(guide.normal) < .98) continue;
+			average = average + image[index];
+			++count;
+		}
+	coarse[pixel] = count ? coarse[pixel] - average / count : Vec();
+}
+
+__global__ void control_apply_kernel(
+	Vec* image, const Vec* coarse, const SurfaceGuide* guides,
+	int width, int height, int coarse_width, int coarse_height
+) {
+	int pixel = blockIdx.x * blockDim.x + threadIdx.x;
+	if (pixel >= width * height) return;
+	SurfaceGuide center = guides[pixel];
+	if (center.object < 0 || center.mixed > 1) return;
+	int x = pixel % width, y = pixel / width, step = max(1, width / coarse_width);
+	double cx = (x + .5) * coarse_width / width - .5;
+	double cy = (y + .5) * coarse_height / height - .5, variation = 0;
+	for (int axis = 0; axis < 4; ++axis) {
+		int nx = x + (axis == 0 ? -step : axis == 1 ? step : 0);
+		int ny = y + (axis == 2 ? -step : axis == 3 ? step : 0);
+		if (nx < 0 || nx >= width || ny < 0 || ny >= height) continue;
+		SurfaceGuide neighbor = guides[ny * width + nx];
+		if (neighbor.object == center.object && neighbor.mixed == center.mixed &&
+			center.normal.dot(neighbor.normal) >= .98)
+			variation = fmax(variation, (image[ny * width + nx] - image[pixel]).squared_length());
+	}
+	Vec correction;
+	double total = 0;
+	for (int dy = -14; dy <= 14; ++dy)
+		for (int dx = -14; dx <= 14; ++dx) {
+			int nx = int(floor(cx)) + dx, ny = int(floor(cy)) + dy;
+			if (nx < 0 || nx >= coarse_width || ny < 0 || ny >= coarse_height) continue;
+			int fine_x = int((nx + .5) * width / coarse_width);
+			int fine_y = int((ny + .5) * height / coarse_height);
+			SurfaceGuide neighbor = guides[fine_y * width + fine_x];
+			if (neighbor.object != center.object || neighbor.mixed != center.mixed ||
+				center.normal.dot(neighbor.normal) < .98 ||
+				fabs((neighbor.position - center.position).dot(center.normal)) > .09) continue;
+			double distance_x = nx - cx, distance_y = ny - cy;
+			double weight = exp(-(distance_x * distance_x + distance_y * distance_y) /
+				(variation > 6e-6 ? 8. : 220.));
+			correction = correction + coarse[ny * coarse_width + nx] * weight;
+			total += weight;
+		}
+	if (total > 0) image[pixel] = image[pixel] + correction / total;
 }
 
 __global__ void reconstruct_diffuse_kernel(
@@ -1092,8 +1183,7 @@ __global__ void hybrid_specular_kernel(Vec* image, int width, int height, int sa
 	if (!intersect(primary, true, first)) return;
 	Feature primary_material = feature(first, primary_state, false);
 	if (config.cache && objects[first.object].diffuse_mask >= 0) samples = min(samples, 64);
-	bool stratified = primary_material.reflection == DIFF ||
-		(config.cache && objects[first.object].diffuse_mask >= 0);
+	bool stratified = primary_material.reflection == DIFF;
 	if (primary_material.reflection == DIFF) {
 		if (config.cache) return;
 		ObjectData object = objects[first.object];
@@ -1825,6 +1915,26 @@ int run(int argc, char** argv) {
 			}
 		}
 		reconstruct_cache(enclosed ? 2 : footprint);
+		if (enclosed && guides && width >= 1280) {
+			int coarse_width = width / 2, coarse_height = height / 2;
+			int coarse_count = coarse_width * coarse_height;
+			Vec* coarse;
+			CUDA_CHECK(cudaMalloc(&coarse, size_t(coarse_count) * sizeof(Vec)));
+			RenderConfig unbiased = settings;
+			unbiased.cache = 0;
+			CUDA_CHECK(cudaMemcpyToSymbol(config, &unbiased, sizeof unbiased));
+			control_path_kernel<<<(coarse_count + threads - 1) / threads, threads>>>(
+				coarse, coarse_width, coarse_height, std::max(256, settings.hybrid_samples));
+			CUDA_CHECK(cudaGetLastError());
+			CUDA_CHECK(cudaMemcpyToSymbol(config, &settings, sizeof settings));
+			control_residual_kernel<<<(coarse_count + threads - 1) / threads, threads>>>(
+				coarse, image, guides, width, height, coarse_width, coarse_height);
+			CUDA_CHECK(cudaGetLastError());
+			control_apply_kernel<<<(count + threads - 1) / threads, threads>>>(
+				image, coarse, guides, width, height, coarse_width, coarse_height);
+			CUDA_CHECK(cudaGetLastError());
+			CUDA_CHECK(cudaFree(coarse));
+		}
 		if (guides) CUDA_CHECK(cudaFree(guides));
 		CUDA_CHECK(cudaFree(visible));
 		CUDA_CHECK(cudaFree(pixels));
