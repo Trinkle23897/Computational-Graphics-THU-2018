@@ -26,7 +26,7 @@ REGIONS = {
 
 def run_job(job, options, directory):
     scene, algorithm, iterations, seed, gpu = job
-    cached = algorithm in ("cache", "cache_hq")
+    cached = algorithm in ("cache", "cache_hq", "cache_ultra")
     label = f"{scene}-{algorithm}-i{iterations:03d}-s{seed}"
     image = directory / f"{label}.ppm"
     command = [str(options.binary), str(options.width), str(options.height), str(image)]
@@ -38,10 +38,11 @@ def run_job(job, options, directory):
             photons = "16" if scene == "vase" else "10" if iterations <= 8 else "8"
         command += [str(iterations), photons, ".5", "1"]
     command += ["--scene", scene, "--nearest", "--seed", str(seed)]
-    if algorithm in ("hybrid", "reuse", "guided", "cache", "cache_hq"):
+    if algorithm in ("hybrid", "reuse", "guided") or cached:
         samples = iterations * 16
         if cached and options.width >= 1920:
-            samples = (576 if algorithm == "cache_hq" else 192) if scene == "balls" else 64
+            samples = ({"cache": 192, "cache_hq": 576, "cache_ultra": 1536}[algorithm]
+                       if scene == "balls" else 64)
         command += ["--hybrid-samples", str(samples), "--reconstruction-radius",
                     "4" if scene == "vase" or cached and options.width >= 1920 else "8"]
     if algorithm == "reuse":
@@ -133,11 +134,15 @@ def plot(summaries, destination):
 
     colors = {"pt": "#d15f4a", "sppm": "#c79a35", "hybrid": "#657bc2", "reuse": "#2b9e77",
               "guided": "#9146ad", "cache_blur": "#c78145", "cache_legacy": "#c25443",
-              "cache": "#138c9e", "cache_hq": "#075c69"}
+              "cache_previous": "#899aab", "cache_previous_hq": "#58697c",
+              "cache": "#138c9e", "cache_hq": "#075c69", "cache_ultra": "#083d47"}
     names = {"pt": "Path tracing", "sppm": "SPPM", "hybrid": "Hybrid SPPM",
              "reuse": "Stratified reuse", "guided": "Guided decomposition",
              "cache_blur": "Previous over-smoothed cache", "cache_legacy": "Biased cache",
-             "cache": "Physics-corrected cache", "cache_hq": "Physics-corrected cache (HQ)"}
+             "cache_previous": "Previous half-resolution correction",
+             "cache_previous_hq": "Previous half-resolution correction (HQ)",
+             "cache": "Path-adaptive correction", "cache_hq": "Path-adaptive correction (HQ)",
+             "cache_ultra": "Path-adaptive correction (ultra)"}
     figure, axes = plt.subplots(2, 2, figsize=(11, 7), constrained_layout=True)
     for row, scene in enumerate(("vase", "balls")):
         metric = "total_error" if any(item["scene"] == scene and "total_error" in item

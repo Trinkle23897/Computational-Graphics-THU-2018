@@ -79,6 +79,7 @@ struct VisiblePoint {
 
 struct SurfaceGuide {
 	Vec position, normal, albedo;
+	double directional;
 	int object, mixed;
 };
 
@@ -786,13 +787,14 @@ __device__ bool scatter(
 	return true;
 }
 
-__device__ RayData camera_ray(int x, int y, int sx, int sy, int width, int height, unsigned int& state) {
+__device__ RayData camera_ray(int x, int y, int sx, int sy, int width, int height,
+	unsigned int& state, double first = -1, double second = -1) {
 	Vec origin(config.camera_x, config.camera_y, config.camera_z);
 	Vec direction = Vec(config.direction_x, config.direction_y, config.direction_z).normalized();
 	Vec horizontal(width * .33 / height * config.camera_scale);
 	Vec vertical = Vec(width * .33 / height, 0, 0).cross(Vec(direction.x, 0, direction.z)).normalized() * .33;
-	double a = config.cache && config.aperture <= 0 ? 1 : 2 * random(state);
-	double b = config.cache && config.aperture <= 0 ? 1 : 2 * random(state);
+	double a = first >= 0 ? 2 * first : config.cache && config.aperture <= 0 ? 1 : 2 * random(state);
+	double b = second >= 0 ? 2 * second : config.cache && config.aperture <= 0 ? 1 : 2 * random(state);
 	double dx = a < 1 ? sqrt(a) : 2 - sqrt(2 - a);
 	double dy = b < 1 ? sqrt(b) : 2 - sqrt(2 - b);
 	Vec ray = (horizontal * ((x + (sx + dx) / config.antialias) / width - .5) +
@@ -1001,12 +1003,50 @@ __global__ void control_apply_kernel(
 				center.normal.dot(neighbor.normal) < .98 ||
 				fabs((neighbor.position - center.position).dot(center.normal)) > .09) continue;
 			double distance_x = nx - cx, distance_y = ny - cy;
+			double difference = (image[fine_y * width + fine_x] - image[pixel]).squared_length();
 			double weight = exp(-(distance_x * distance_x + distance_y * distance_y) /
-				(variation > 6e-6 ? 8. : 220.));
+				(variation > 1.5e-6 ? 8. : 220.) - difference * 10000);
 			correction = correction + coarse[ny * coarse_width + nx] * weight;
 			total += weight;
 		}
 	if (total > 0) image[pixel] = image[pixel] + correction / total;
+}
+
+__global__ void edge_path_kernel(
+	const Vec* image, Vec* output, const SurfaceGuide* guides, int width, int height, int samples
+) {
+	int pixel = blockIdx.x * blockDim.x + threadIdx.x;
+	if (pixel >= width * height) return;
+	int x = pixel % width, y = pixel / width;
+	SurfaceGuide center = guides[pixel];
+	bool edge = false;
+	for (int dy = -2; dy <= 2 && !edge; ++dy)
+		for (int dx = -2; dx <= 2 && !edge; ++dx) {
+			int nx = x + dx, ny = y + dy;
+			if (nx < 0 || nx >= width || ny < 0 || ny >= height || (!dx && !dy)) continue;
+			SurfaceGuide neighbor = guides[ny * width + nx];
+			if (center.object < 0 && neighbor.object < 0) continue;
+			edge = neighbor.object != center.object || neighbor.mixed != center.mixed ||
+				(neighbor.albedo - center.albedo).squared_length() > .0025;
+		}
+	if (!edge) {
+		output[pixel] = image[pixel];
+		return;
+	}
+	unsigned int state = scramble(pixel + 1 + config.seed * 0x9e3779b9u);
+	Vec color;
+	int subpixels = config.antialias * config.antialias;
+	for (int sy = 0; sy < config.antialias; ++sy)
+		for (int sx = 0; sx < config.antialias; ++sx)
+			for (int sample = 0; sample < samples; ++sample) {
+				unsigned int index = sample * subpixels + sy * config.antialias + sx;
+				RayData ray = camera_ray(x, y, sx, sy, width, height, state,
+					low_discrepancy(index, pixel, 2), low_discrepancy(index, pixel, 3));
+				double selector = (sample + random(state)) / samples;
+				color = color + path_trace(ray, state, nullptr, selector,
+					low_discrepancy(index, pixel, 0), low_discrepancy(index, pixel, 1));
+			}
+	output[pixel] = color / (double(subpixels) * samples);
 }
 
 __global__ void reconstruct_diffuse_kernel(
@@ -1056,8 +1096,8 @@ __global__ void reconstruct_mixed_kernel(
 	int pixel = blockIdx.x * blockDim.x + threadIdx.x;
 	if (pixel >= width * height) return;
 	SurfaceGuide center = guides[pixel];
-	if (center.object < 0 || !center.mixed || (config.cache && center.mixed == 3 &&
-		center.albedo.maximum() < .15 && luminance(input[pixel]) > .0015)) {
+	if (center.object < 0 || !center.mixed ||
+		(config.cache && center.mixed > 1 && center.directional < .2)) {
 		output[pixel] = input[pixel];
 		return;
 	}
@@ -1105,8 +1145,7 @@ __global__ void radiance_cache_kernel(
 	int pixel = blockIdx.x * blockDim.x + threadIdx.x;
 	if (pixel >= width * height) return;
 	SurfaceGuide center = guides[pixel];
-	if (center.object < 0 || (center.mixed == 3 && center.albedo.maximum() < .15 &&
-		luminance(input[pixel]) > .0015)) {
+	if (center.object < 0 || (config.cache && center.mixed > 1 && center.directional < .2)) {
 		output[pixel] = input[pixel];
 		return;
 	}
@@ -1127,7 +1166,8 @@ __global__ void radiance_cache_kernel(
 			double plane = fabs((neighbor.position - center.position).dot(center.normal));
 			if (alignment < .98 || plane > .09) continue;
 			Vec sample = input[index];
-			if (center.mixed == 3 && center.albedo.maximum() < .15 && luminance(sample) > .0015) continue;
+			if (config.hybrid_samples >= 128 && center.directional > .5 && luminance(sample) >
+				1.2 * fmax(1e-4, luminance(value))) continue;
 			double albedo = (neighbor.albedo - center.albedo).squared_length();
 			if (albedo > (factor ? .16 : .0025)) continue;
 			if (factor)
@@ -1173,7 +1213,9 @@ __global__ void rare_specular_kernel(Vec* image, int width, int height, int samp
 	image[pixel] = image[pixel] + reflected / (double(config.antialias * config.antialias) * samples);
 }
 
-__global__ void hybrid_specular_kernel(Vec* image, int width, int height, int samples) {
+__global__ void hybrid_specular_kernel(
+	Vec* image, SurfaceGuide* guides, int width, int height, int samples
+) {
 	int pixel = blockIdx.x * blockDim.x + threadIdx.x;
 	if (pixel >= width * height) return;
 	int x = pixel % width, y = pixel / width;
@@ -1182,7 +1224,6 @@ __global__ void hybrid_specular_kernel(Vec* image, int width, int height, int sa
 	Hit first;
 	if (!intersect(primary, true, first)) return;
 	Feature primary_material = feature(first, primary_state, false);
-	if (config.cache && objects[first.object].diffuse_mask >= 0) samples = min(samples, 64);
 	bool stratified = primary_material.reflection == DIFF;
 	if (primary_material.reflection == DIFF) {
 		if (config.cache) return;
@@ -1211,9 +1252,12 @@ __global__ void hybrid_specular_kernel(Vec* image, int width, int height, int sa
 	double scale = fmax(.02, luminance(average));
 	double directional_fraction = events / count;
 	double uncertainty = sqrt(variance / count) / scale;
+	if (guides) guides[pixel].directional = directional_fraction;
 	if (directional_fraction < .03 && uncertainty < .9) return;
 	double score = directional_fraction + uncertainty * .2;
-	int extra = max(0, min(samples, int(ceil(samples * fmin(1., fmax(.3, score))))) - pilot);
+	int target = max(1, min(samples, int(ceil(samples * fmin(1., fmax(.3, score))))));
+	int extra = max(0, target - (config.cache ? 0 : pilot));
+	if (config.cache) color = Vec();
 	for (int sy = 0; sy < config.antialias; ++sy)
 		for (int sx = 0; sx < config.antialias; ++sx)
 			for (int sample = 0; sample < extra; ++sample) {
@@ -1222,7 +1266,7 @@ __global__ void hybrid_specular_kernel(Vec* image, int width, int height, int sa
 					? (sample + random(state)) / extra : -1;
 				color = color + path_trace(ray, state, nullptr, selector);
 			}
-	image[pixel] = color / (double(subpixels) * (pilot + extra));
+	image[pixel] = color / (double(subpixels) * (config.cache ? extra : pilot + extra));
 }
 
 __global__ void initialize_pixels(PixelState* pixels, int count, double radius) {
@@ -1870,9 +1914,9 @@ int run(int argc, char** argv) {
 				image = reconstructed;
 			}
 		}
-		bool enclosed = settings.cache && !has_exposed_emitter();
+		bool detailed = settings.cache && settings.hybrid_samples >= 128;
 		int footprint = std::max(1, settings.reconstruction_radius *
-			std::max(1, width / (enclosed ? 320 : 160)));
+			std::max(1, width / (detailed ? 320 : 160)));
 		auto reconstruct_cache = [&](int radius) {
 			if (!settings.cache || !guides) return;
 			Vec* cached;
@@ -1885,7 +1929,7 @@ int run(int argc, char** argv) {
 			}
 			CUDA_CHECK(cudaFree(cached));
 		};
-		if (enclosed) reconstruct_cache(footprint);
+		if (detailed) reconstruct_cache(footprint);
 		if (settings.hybrid_samples > 0) {
 			RenderConfig hybrid = settings;
 			if (settings.shadow_samples > 0 || has_exposed_emitter())
@@ -1895,7 +1939,7 @@ int run(int argc, char** argv) {
 				image, width, height, std::max(16, std::min(128, settings.hybrid_samples / 24)));
 			CUDA_CHECK(cudaGetLastError());
 			hybrid_specular_kernel<<<(count + threads - 1) / threads, threads>>>(
-				image, width, height, settings.hybrid_samples);
+				image, guides, width, height, settings.hybrid_samples);
 			CUDA_CHECK(cudaGetLastError());
 			if (guides) {
 				Vec* reconstructed;
@@ -1914,9 +1958,9 @@ int run(int argc, char** argv) {
 				}
 			}
 		}
-		reconstruct_cache(enclosed ? 2 : footprint);
-		if (enclosed && guides && width >= 1280) {
-			int coarse_width = width / 2, coarse_height = height / 2;
+		reconstruct_cache(detailed ? 2 : footprint);
+		if (detailed && guides && width >= 1280) {
+			int coarse_width = width, coarse_height = height;
 			int coarse_count = coarse_width * coarse_height;
 			Vec* coarse;
 			CUDA_CHECK(cudaMalloc(&coarse, size_t(coarse_count) * sizeof(Vec)));
@@ -1924,7 +1968,9 @@ int run(int argc, char** argv) {
 			unbiased.cache = 0;
 			CUDA_CHECK(cudaMemcpyToSymbol(config, &unbiased, sizeof unbiased));
 			control_path_kernel<<<(coarse_count + threads - 1) / threads, threads>>>(
-				coarse, coarse_width, coarse_height, std::max(256, settings.hybrid_samples));
+				coarse, coarse_width, coarse_height,
+				std::max(192, std::min(settings.hybrid_samples >= 768 ? 320 : 256,
+					settings.hybrid_samples / 2)));
 			CUDA_CHECK(cudaGetLastError());
 			CUDA_CHECK(cudaMemcpyToSymbol(config, &settings, sizeof settings));
 			control_residual_kernel<<<(coarse_count + threads - 1) / threads, threads>>>(
@@ -1933,6 +1979,16 @@ int run(int argc, char** argv) {
 			control_apply_kernel<<<(count + threads - 1) / threads, threads>>>(
 				image, coarse, guides, width, height, coarse_width, coarse_height);
 			CUDA_CHECK(cudaGetLastError());
+			Vec* corrected;
+			CUDA_CHECK(cudaMalloc(&corrected, size_t(count) * sizeof(Vec)));
+			CUDA_CHECK(cudaMemcpyToSymbol(config, &unbiased, sizeof unbiased));
+			edge_path_kernel<<<(count + threads - 1) / threads, threads>>>(
+				image, corrected, guides, width, height,
+				std::max(128, std::min(256, settings.hybrid_samples / 2)));
+			CUDA_CHECK(cudaGetLastError());
+			CUDA_CHECK(cudaMemcpyToSymbol(config, &settings, sizeof settings));
+			CUDA_CHECK(cudaFree(image));
+			image = corrected;
 			CUDA_CHECK(cudaFree(coarse));
 		}
 		if (guides) CUDA_CHECK(cudaFree(guides));
