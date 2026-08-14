@@ -1043,8 +1043,10 @@ __global__ void radiance_cache_kernel(
 				sample = Vec(sample.x / fmax(.04, neighbor.albedo.x),
 					sample.y / fmax(.04, neighbor.albedo.y), sample.z / fmax(.04, neighbor.albedo.z));
 			double difference = (sample - reference).squared_length();
+			double sensitivity = center.mixed == 2 ? 55 : config.shadow_samples > 0
+				? (center.mixed ? 30 : 8) : (center.mixed ? 60 : 64);
 			double weight = (dx ? 1. : 2.) * (dy ? 1. : 2.) *
-				exp(-difference * (center.mixed == 2 ? 55 : center.mixed ? 30 : 8) - plane * 20);
+				exp(-difference * sensitivity - plane * 20);
 			weighted = weighted + sample * weight;
 			total += weight;
 		}
@@ -1089,6 +1091,7 @@ __global__ void hybrid_specular_kernel(Vec* image, int width, int height, int sa
 	Hit first;
 	if (!intersect(primary, true, first)) return;
 	Feature primary_material = feature(first, primary_state, false);
+	if (config.cache && objects[first.object].diffuse_mask >= 0) samples = min(samples, 64);
 	bool stratified = primary_material.reflection == DIFF ||
 		(config.cache && objects[first.object].diffuse_mask >= 0);
 	if (primary_material.reflection == DIFF) {
@@ -1777,6 +1780,22 @@ int run(int argc, char** argv) {
 				image = reconstructed;
 			}
 		}
+		bool enclosed = settings.cache && !has_exposed_emitter();
+		int footprint = std::max(1, settings.reconstruction_radius *
+			std::max(1, width / (enclosed ? 320 : 160)));
+		auto reconstruct_cache = [&](int radius) {
+			if (!settings.cache || !guides) return;
+			Vec* cached;
+			CUDA_CHECK(cudaMalloc(&cached, size_t(count) * sizeof(Vec)));
+			for (int stride = 1; stride <= radius; stride <<= 1) {
+				radiance_cache_kernel<<<(count + threads - 1) / threads, threads>>>(
+					image, cached, guides, width, height, stride);
+				CUDA_CHECK(cudaGetLastError());
+				std::swap(image, cached);
+			}
+			CUDA_CHECK(cudaFree(cached));
+		};
+		if (enclosed) reconstruct_cache(footprint);
 		if (settings.hybrid_samples > 0) {
 			RenderConfig hybrid = settings;
 			if (settings.shadow_samples > 0 || has_exposed_emitter())
@@ -1805,19 +1824,7 @@ int run(int argc, char** argv) {
 				}
 			}
 		}
-		if (settings.cache && guides) {
-			Vec* cached;
-			CUDA_CHECK(cudaMalloc(&cached, size_t(count) * sizeof(Vec)));
-			int footprint = std::max(1, settings.reconstruction_radius *
-				std::max(1, width / (has_exposed_emitter() ? 160 : 320)));
-			for (int stride = 1; stride <= footprint; stride <<= 1) {
-				radiance_cache_kernel<<<(count + threads - 1) / threads, threads>>>(
-					image, cached, guides, width, height, stride);
-				CUDA_CHECK(cudaGetLastError());
-				std::swap(image, cached);
-			}
-			CUDA_CHECK(cudaFree(cached));
-		}
+		reconstruct_cache(enclosed ? 2 : footprint);
 		if (guides) CUDA_CHECK(cudaFree(guides));
 		CUDA_CHECK(cudaFree(visible));
 		CUDA_CHECK(cudaFree(pixels));

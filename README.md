@@ -92,12 +92,12 @@ $$L_o = L_{\mathrm{diffuse,SPPM}} + L_{\mathrm{specular,PT}} + L_{\mathrm{direct
 `--cache` 在 Guided Hybrid 的物理传输分解之上增加五个变化：
 
 1. **按分辨率控制光子支持域。** 令 $s=\min(1,\sqrt{640\cdot360/(WH)})$，自动使用 $r'=r\max(0.24,s)$、$\rho'=\rho s$，避免高分辨率下对同一世界坐标邻域做二次增长的重复查询。
-2. **把混合 BSDF 明确拆成两个估计量。** 漫反射分支始终交给 SPPM，并乘以 $1-p_{\mathrm{specular}}$；镜面分支由独立相机路径估计，再乘回 $p_{\mathrm{specular}}$。因此地板倒影、瓷器高光和玻璃反射不参与漫反射缓存，不会被光子半径涂开。
-3. **缓存可复用的辐照度，而不是直接糊 RGB。** 先除掉纹理反照率，再用跨度为 1、2、4、8……像素的几何约束 à-trous 层级复用照明，最后恢复原像素纹理。物体 ID、法线、世界平面距离、反照率、材质类型和亮度差异共同限制复用；有镜面高光的黑色条纹像素直接绕过缓存。
+2. **把混合 BSDF 明确拆成两个估计量。** 漫反射分支交给 SPPM，并乘以 $1-p_{\mathrm{specular}}$；镜面分支由独立相机路径估计，再乘回 $p_{\mathrm{specular}}$。对于光源被玻璃包裹的焦散场景，大范围缓存必须放在镜面和折射合成之前，合成后只允许跨度不超过 2 像素的局部复用；否则地板倒影和玻璃内部反射会被错误平均成发光特效。
+3. **缓存可复用的辐照度，而不是直接糊 RGB。** 先除掉纹理反照率，再用跨度为 1、2、4、8……像素的几何约束 à-trous 层级复用漫反射照明，最后恢复原像素纹理。物体 ID、法线、世界平面距离、反照率、材质类型和亮度差异共同限制复用；焦散场景提高亮度差异惩罚，有镜面高光的黑色条纹像素直接绕过缓存。
 4. **把可确定部分从随机变量里拿掉。** 针孔相机使用稳定的分层子像素位置，面积光直接连接使用逐像素确定性低差异序列；开启真实光圈时仍保留随机透镜采样。光子和玻璃路径继续使用独立随机种子，不把实际采样方差藏进固定序列。
-5. **按光源可见性分配缓存尺度和采样预算。** 外露面积光场景可以使用更宽的漫反射辐照度 footprint；被玻璃包住的光源保留更紧的尺度，防止球面倒影和折射焦散发生亮度偏移。低迭代档位适当提高每轮光子预算，减少启动镜面路径以后的额外循环。核心判断来自场景几何、材质和光源遮挡，不依赖 `vase`、`balls` 等场景名称。
+5. **按光源可见性分配缓存尺度和采样预算。** 外露面积光场景可以使用更宽的漫反射辐照度 footprint；被玻璃包住的光源自动切换到“先漫反射、后镜面”的保真模式。透明玻璃使用 192–256 个相机路径样本，带条纹遮罩的球体限制为 64 个，避免把昂贵预算浪费在已经收敛的颜色带上。核心判断来自场景几何、材质和光源遮挡，不依赖 `vase`、`balls` 等场景名称。
 
-辐照度空间复用是明确的**有偏降方差**，不是逐像素无偏 Monte Carlo；确定性采样也可能保留跨 seed 不可见的系统误差。因此除了四个独立 seed 的真实 RMS，还同时检查场景原始亮度、花纹梯度、玻璃边界和地板倒影，拒绝把画面调暗、磨平或者改变场景来获得好看的数字。
+辐照度空间复用是明确的**有偏降方差**，不是逐像素无偏 Monte Carlo；确定性采样也可能保留跨 seed 不可见的系统误差。只看随机噪声会奖励过度平滑，因此必须同时约束地板倒影、玻璃边缘、条纹梯度和场景亮度。原始 balls 分支的 CPU 渲染器也已经重新编译交叉验证，不能拿经过不同曝光处理的图片强行把当前场景压暗。
 
 **3840×2160，一张 NVIDIA H200，CUDA event 统计 GPU kernel：**
 
@@ -110,15 +110,23 @@ $$L_o = L_{\mathrm{diffuse,SPPM}} + L_{\mathrm{specular,PT}} + L_{\mathrm{direct
 | 花瓶 | **分辨率自适应缓存** | **24** | **4** | **41.438 s** | **0.292** |
 | Balls | Guided Hybrid | 8 | 2 | 60.778 s | 0.976 |
 | Balls | Guided Hybrid | 16 | 2 | 116.867 s | 0.723 |
-| Balls | **分辨率自适应缓存：极速** | **8** | **4** | **11.441 s** | **0.269** |
-| Balls | **分辨率自适应缓存** | **16** | **4** | **12.720 s** | **0.237** |
-| Balls | 分辨率自适应缓存 | 24 | 4 | 14.366 s | 0.213 |
+| Balls | 旧缓存：过度平滑 | 16 | 4 | 12.720 s | 0.237 |
+| Balls | 保留细节的分量缓存 | 8 | 4 | 15.902 s | 0.325 |
+| Balls | 保留细节的分量缓存 | 16 | 4 | 17.205 s | 0.296 |
+| Balls | **保留细节的分量缓存** | **24** | **4** | **18.804 s** | **0.274** |
+| Balls | 保留细节的分量缓存 HQ | 16 | 4 | 19.356 s | 0.281 |
 
-花瓶 24 轮的白瓷 / 蓝花 / 整体 / 彩虹 / 地板 RMS 分别为 **0.464 / 0.226 / 0.273 / 0.271 / 0.111**；balls 16 轮的背景 / 地板 / 倒影 / 玻璃 / 条纹 RMS 分别为 **0.253 / 0.264 / 0.209 / 0.318 / 0.031**。彩色条纹边缘梯度由 Guided 的 100.63 变为 100.74，白瓷边缘由 144.23 变为 144.44；balls 背景亮度为 49.32，旧算法为 49.34，没有通过统一压暗来隐藏噪点。
+下面是同一 4K 场景的保真度检查。过去的缓存虽然把 RMS 压到了 0.237，却损失了 **12.6% 的地板倒影边缘**和 **14.8% 的玻璃边缘**；这些确定性的画面偏差不会出现在跨 seed RMS 里。
 
-和上一代 4K Guided Hybrid 的 16 轮相比，花瓶在噪声下降的同时约快 **6.48×**；balls 的 8 轮极速档快 **10.21×**，16 轮低噪档快 **9.19×**。按 $\sigma^2t$ 计算，花瓶和 balls 低噪档的方差—时间效率分别提高约 **31×** 和 **86×**。历史 Guided 基线使用两个独立 seed，新算法使用要求更严格的四个独立 seed；完整逐区域亮度、边缘与噪声见 [docs/render/convergence-4k.csv](docs/render/convergence-4k.csv)。
+| 算法 | 地板倒影边缘 | 玻璃边缘 | 条纹边缘 | 背景亮度 |
+| --- | ---: | ---: | ---: | ---: |
+| Guided Hybrid 参考 | 37.91 | 13.44 | 100.63 | 49.34 |
+| 旧缓存：过度平滑 | 33.15 | 11.45 | 100.74 | 49.32 |
+| 保留细节的分量缓存 | **37.91** | **13.17** | **100.51** | **49.32** |
 
-![原生 4K Guided Hybrid 与分辨率自适应辐照度缓存的独立 seed 收敛曲线](docs/render/convergence-4k.png)
+花瓶 24 轮的白瓷 / 蓝花 / 整体 / 彩虹 / 地板 RMS 分别为 **0.464 / 0.226 / 0.273 / 0.271 / 0.111**；balls 24 轮的背景 / 地板 / 倒影 / 玻璃 / 条纹 RMS 分别为 **0.206 / 0.212 / 0.239 / 0.474 / 0.090**。HQ 档位进一步把玻璃 RMS 降到 **0.441**。和上一代 4K Guided Hybrid 的 16 轮相比，花瓶约快 **6.48×**，balls 16 轮在保留倒影和玻璃细节的前提下约快 **6.79×**；按 $\sigma^2t$ 计算，两者的方差—时间效率分别提高约 **31×** 和 **41×**。历史 Guided 基线使用两个独立 seed，缓存算法使用要求更严格的四个独立 seed；完整逐区域亮度、边缘与噪声见 [docs/render/convergence-4k.csv](docs/render/convergence-4k.csv)。
+
+![原生 4K Guided Hybrid、过度平滑缓存与保留镜面细节的分量缓存收敛曲线](docs/render/convergence-4k.png)
 
 #### 同场景渲染对比
 
@@ -279,14 +287,19 @@ nvcc -O3 -arch=sm_90 -std=c++17 cuda.cu -o render-cuda
   --scene vase --nearest --shadow-samples 3 \
   --hybrid-samples 64 --reconstruction-radius 4 --cache
 
-# 原生 4K Balls：16 轮；保留彩色条纹、黑球高光和玻璃焦散
-./render-cuda 3840 2160 balls-cache-4k.ppm 16 8 .5 1 \
-  --scene balls --nearest --hybrid-samples 64 \
+# 原生 4K Balls：24 轮，18.804 秒 / RMS 0.274；保留倒影和玻璃焦散
+./render-cuda 3840 2160 balls-cache-4k.ppm 24 8 .5 1 \
+  --scene balls --nearest --hybrid-samples 192 \
   --reconstruction-radius 8 --cache
 
-# 原生 4K Balls 极速档：8 轮、每轮 10 个光子
-./render-cuda 3840 2160 balls-cache-fast-4k.ppm 8 10 .5 1 \
-  --scene balls --nearest --hybrid-samples 64 \
+# 原生 4K Balls 快速档：16 轮，17.205 秒 / RMS 0.296
+./render-cuda 3840 2160 balls-cache-fast-4k.ppm 16 8 .5 1 \
+  --scene balls --nearest --hybrid-samples 192 \
+  --reconstruction-radius 8 --cache
+
+# 原生 4K Balls HQ：19.356 秒；更多玻璃样本，条纹球仍限制为 64
+./render-cuda 3840 2160 balls-cache-hq-4k.ppm 16 8 .5 1 \
+  --scene balls --nearest --hybrid-samples 256 \
   --reconstruction-radius 8 --cache
 
 # 8K 花瓶；高分辨率下相应缩小光子汇合半径
@@ -318,6 +331,10 @@ python3 benchmark.py --binary ./render-cuda --algorithms cache \
   --iterations 8,16,24 --seeds 0,1,2,3 \
   --width 3840 --height 2160 \
   --gpus 0,1,2,3,4,5,6,7 --output /tmp/sppm-4k-cache
+
+# 只对比保真标准档和 HQ 档
+python3 benchmark.py --binary ./render-cuda --algorithms cache,cache_hq \
+  --iterations 16 --seeds 0,1,2,3 --width 3840 --height 2160 --gpus 0,1,2,3
 
 # 单卡把 --gpus 改成 0；快速验证可以缩短为：
 python3 benchmark.py --binary ./render-cuda \

@@ -26,6 +26,7 @@ REGIONS = {
 
 def run_job(job, options, directory):
     scene, algorithm, iterations, seed, gpu = job
+    cached = algorithm in ("cache", "cache_hq")
     label = f"{scene}-{algorithm}-i{iterations:03d}-s{seed}"
     image = directory / f"{label}.ppm"
     command = [str(options.binary), str(options.width), str(options.height), str(image)]
@@ -33,19 +34,21 @@ def run_job(job, options, directory):
         command += [str(iterations * 8)]
     else:
         photons = "5" if scene == "vase" else "8"
-        if algorithm == "cache" and options.width >= 1920:
+        if cached and options.width >= 1920:
             photons = "16" if scene == "vase" else "10" if iterations <= 8 else "8"
         command += [str(iterations), photons, ".5", "1"]
     command += ["--scene", scene, "--nearest", "--seed", str(seed)]
-    if algorithm in ("hybrid", "reuse", "guided", "cache"):
-        samples = min(iterations * 16, 64) if algorithm == "cache" and options.width >= 1920 else iterations * 16
+    if algorithm in ("hybrid", "reuse", "guided", "cache", "cache_hq"):
+        samples = iterations * 16
+        if cached and options.width >= 1920:
+            samples = (256 if algorithm == "cache_hq" else 192) if scene == "balls" else 64
         command += ["--hybrid-samples", str(samples), "--reconstruction-radius",
                     "4" if scene == "vase" else "8"]
     if algorithm == "reuse":
         command.append("--reuse")
     if algorithm == "guided":
         command.append("--guided")
-    if algorithm == "cache":
+    if cached:
         command.append("--cache")
         if scene == "vase" and options.width >= 1920:
             command += ["--shadow-samples", "3"]
@@ -103,10 +106,12 @@ def plot(summaries, destination):
     import matplotlib.pyplot as plt
 
     colors = {"pt": "#d15f4a", "sppm": "#c79a35", "hybrid": "#657bc2", "reuse": "#2b9e77",
-              "guided": "#9146ad", "cache": "#138c9e"}
+              "guided": "#9146ad", "cache_blur": "#c78145", "cache": "#138c9e",
+              "cache_hq": "#075c69"}
     names = {"pt": "Path tracing", "sppm": "SPPM", "hybrid": "Hybrid SPPM",
              "reuse": "Stratified reuse", "guided": "Guided decomposition",
-             "cache": "Resolution-aware cache"}
+             "cache_blur": "Previous over-smoothed cache", "cache": "Detail-preserving cache",
+             "cache_hq": "Detail-preserving cache (HQ)"}
     figure, axes = plt.subplots(2, 2, figsize=(11, 7), constrained_layout=True)
     for row, scene in enumerate(("vase", "balls")):
         for algorithm in colors:
@@ -123,7 +128,7 @@ def plot(summaries, destination):
                          else "GPU kernel time (seconds)", ylabel="Independent-seed noise RMS")
                 axis.set_title(scene.capitalize())
                 axis.grid(alpha=.2, which="both")
-    axes[0, 1].legend(frameon=False)
+    axes[1, 1].legend(frameon=False, fontsize=8)
     figure.savefig(destination, dpi=180, facecolor="white")
     plt.close(figure)
 
