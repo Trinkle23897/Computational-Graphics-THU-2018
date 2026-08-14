@@ -99,7 +99,7 @@ struct RenderConfig {
 	double medium_density, medium_albedo, anisotropy, volume_density, volume_step;
 	double volume_emission, volume_radius, volume_x, volume_y, volume_z, dispersion;
 	double camera_x, camera_y, camera_z, direction_x, direction_y, direction_z, camera_offset, camera_scale;
-	int antialias, shadow_samples, enable_pbr, texture_filter, hybrid_samples, reconstruction_radius;
+	int antialias, shadow_samples, enable_pbr, texture_filter, hybrid_samples, reconstruction_radius, reuse;
 	unsigned int seed;
 };
 
@@ -461,8 +461,8 @@ __device__ Vec sample_sphere(unsigned int& state) {
 	return Vec(radius * cos(angle), height, radius * sin(angle));
 }
 
-__device__ EmitterData choose_emitter(unsigned int& state, bool direct = false) {
-	double value = random(state), accumulated = 0;
+__device__ EmitterData choose_emitter(unsigned int& state, bool direct = false, double sample = -1) {
+	double value = sample < 0 ? random(state) : sample, accumulated = 0;
 	for (int index = 0; index < emitter_count - 1; ++index) {
 		accumulated += direct ? emitters[index].direct_probability : emitters[index].probability;
 		if (value < accumulated) return emitters[index];
@@ -750,7 +750,7 @@ __device__ bool scatter(
 	base *= base;
 	double cosine = 1 - (entering ? -ray.direction.dot(normal) : transmitted.dot(hit.normal));
 	double reflection = base + (1 - base) * cosine * cosine * cosine * cosine * cosine;
-	double probability = .25 + .5 * reflection;
+	double probability = config.reuse ? .1 + .8 * reflection : .25 + .5 * reflection;
 	if (random(state) < probability) {
 		throughput = throughput * (reflection / probability);
 		ray = RayData{hit.position, reflected};
@@ -784,7 +784,8 @@ __device__ RayData camera_ray(int x, int y, int sx, int sy, int width, int heigh
 	return RayData{origin + ray * config.camera_offset, ray};
 }
 
-__device__ Vec path_trace(RayData ray, unsigned int& state, double* directional_events = nullptr) {
+__device__ Vec path_trace(RayData ray, unsigned int& state, double* directional_events = nullptr,
+	double primary_selector = -1) {
 	Vec throughput(1, 1, 1), result;
 	int wavelength = -1;
 	bool specular_path = true;
@@ -816,6 +817,11 @@ __device__ Vec path_trace(RayData ray, unsigned int& state, double* directional_
 			break;
 		}
 		Feature material = feature(hit, state);
+		if (depth == 0 && primary_selector >= 0 && object.reflection == DIFF &&
+			object.mixed_specular > 0 && object.specular_mask < 0 && object.diffuse_mask < 0) {
+			material = feature(hit, state, false);
+			if (primary_selector < object.mixed_specular) material.reflection = SPEC;
+		}
 		if (directional_events && material.reflection != DIFF && depth < 3)
 			*directional_events += material.reflection == REFR ? 1 : .5;
 		if (material.reflection == DIFF)
@@ -1019,7 +1025,10 @@ __global__ void hybrid_specular_kernel(Vec* image, int width, int height, int sa
 		for (int sx = 0; sx < config.antialias; ++sx)
 			for (int sample = 0; sample < pilot; ++sample) {
 				double directional;
-				Vec value = path_trace(camera_ray(x, y, sx, sy, width, height, state), state, &directional);
+				RayData ray = camera_ray(x, y, sx, sy, width, height, state);
+				double selector = config.reuse && primary_material.reflection == DIFF
+					? (sample + random(state)) / pilot : -1;
+				Vec value = path_trace(ray, state, &directional, selector);
 				events += directional > 0;
 				color = color + value;
 				squared = squared + value.multiply(value);
@@ -1035,8 +1044,12 @@ __global__ void hybrid_specular_kernel(Vec* image, int width, int height, int sa
 	int extra = max(0, min(samples, int(ceil(samples * fmin(1., fmax(.3, score))))) - pilot);
 	for (int sy = 0; sy < config.antialias; ++sy)
 		for (int sx = 0; sx < config.antialias; ++sx)
-			for (int sample = 0; sample < extra; ++sample)
-				color = color + path_trace(camera_ray(x, y, sx, sy, width, height, state), state);
+			for (int sample = 0; sample < extra; ++sample) {
+				RayData ray = camera_ray(x, y, sx, sy, width, height, state);
+				double selector = config.reuse && primary_material.reflection == DIFF
+					? (sample + random(state)) / extra : -1;
+				color = color + path_trace(ray, state, nullptr, selector);
+			}
 	image[pixel] = color / (double(subpixels) * (pilot + extra));
 }
 
@@ -1113,6 +1126,14 @@ __global__ void visible_points_kernel(
 			point.cell_x = int(floor(hit.position.x / cell_size));
 			point.cell_y = int(floor(hit.position.y / cell_size));
 			point.cell_z = int(floor(hit.position.z / cell_size));
+			if (config.reuse && object.shape == kCube) {
+				if (fabs(hit.normal.x) > .9)
+					point.cell_x = int(floor((hit.normal.x < 0 ? object.a.x : object.b.x) / cell_size));
+				else if (fabs(hit.normal.y) > .9)
+					point.cell_y = int(floor((hit.normal.y < 0 ? object.a.y : object.b.y) / cell_size));
+				else
+					point.cell_z = int(floor((hit.normal.z < 0 ? object.a.z : object.b.z) / cell_size));
+			}
 			point.object = hit.object;
 			unsigned int bucket = cell_hash(point.cell_x, point.cell_y, point.cell_z, mask);
 			point.next = atomicExch(&buckets[bucket], index);
@@ -1130,9 +1151,16 @@ __device__ void collect(
 	int x = int(floor(position.x / cell_size));
 	int y = int(floor(position.y / cell_size));
 	int z = int(floor(position.z / cell_size));
-	for (int dx = -1; dx <= 1; ++dx)
-		for (int dy = -1; dy <= 1; ++dy)
-			for (int dz = -1; dz <= 1; ++dz) {
+	ObjectData surface = objects[object];
+	Vec geometric = config.reuse && surface.shape == kCube ? object_normal(surface, position) : normal;
+	int flat = config.reuse && surface.shape == kCube
+		? (fabs(geometric.x) > .9 ? 0 : fabs(geometric.y) > .9 ? 1 : 2) : -1;
+	if (flat == 0) x = int(floor((geometric.x < 0 ? surface.a.x : surface.b.x) / cell_size));
+	if (flat == 1) y = int(floor((geometric.y < 0 ? surface.a.y : surface.b.y) / cell_size));
+	if (flat == 2) z = int(floor((geometric.z < 0 ? surface.a.z : surface.b.z) / cell_size));
+	for (int dx = flat == 0 ? 0 : -1; dx <= (flat == 0 ? 0 : 1); ++dx)
+		for (int dy = flat == 1 ? 0 : -1; dy <= (flat == 1 ? 0 : 1); ++dy)
+			for (int dz = flat == 2 ? 0 : -1; dz <= (flat == 2 ? 0 : 1); ++dz) {
 				int cx = x + dx, cy = y + dy, cz = z + dz;
 				int index = buckets[cell_hash(cx, cy, cz, mask)];
 				while (index >= 0) {
@@ -1160,7 +1188,13 @@ __global__ void photons_kernel(
 	int index = blockIdx.x * blockDim.x + threadIdx.x;
 	if (index >= photons) return;
 	unsigned int state = scramble(index + 1 + iteration * 0x85ebca6bu + config.seed * 0x9e3779b9u);
-	EmitterData emitter = choose_emitter(state);
+	double emitter_sample = -1;
+	if (config.reuse) {
+		double shift = (scramble(iteration * 0x9e3779b9u + config.seed) + .5) * 2.3283064365386963e-10;
+		emitter_sample = (index + random(state)) / photons + shift;
+		if (emitter_sample >= 1) emitter_sample -= 1;
+	}
+	EmitterData emitter = choose_emitter(state, false, emitter_sample);
 	Vec emitter_normal;
 	Vec origin = sample_light(emitter, emitter_normal, state);
 	RayData ray{origin, sample_diffuse(emitter_normal, state)};
@@ -1422,6 +1456,10 @@ bool parse_settings(int argc, char** argv, int start, RenderConfig& settings) {
 			settings.texture_filter = 0;
 			continue;
 		}
+		if (option == "--reuse") {
+			settings.reuse = 1;
+			continue;
+		}
 		if (index + 1 >= argc) return false;
 		const char* value = argv[++index];
 		if (option == "--scene") {
@@ -1499,7 +1537,7 @@ int run(int argc, char** argv) {
 		fputs("         --shadow-samples N\n", stderr);
 		fputs("         --camera-origin X,Y,Z --camera-direction X,Y,Z --camera-offset F --camera-scale F\n", stderr);
 		fputs("         --aa N --roughness F --metallic F --bump F --dispersion F --nearest\n", stderr);
-		fputs("         --hybrid-samples N --reconstruction-radius N --seed N\n", stderr);
+		fputs("         --hybrid-samples N --reconstruction-radius N --reuse --seed N\n", stderr);
 		fputs("         --medium-density F --medium-albedo F --anisotropy F\n", stderr);
 		fputs("         --volume-density F --volume-step F --volume-emission F --volume-radius F\n", stderr);
 		fputs("         --volume-center X,Y,Z\n", stderr);
@@ -1602,8 +1640,15 @@ int run(int argc, char** argv) {
 			reconstruct_diffuse_kernel<<<(count + threads - 1) / threads, threads>>>(
 				image, reconstructed, guides, width, height);
 			CUDA_CHECK(cudaGetLastError());
-			CUDA_CHECK(cudaFree(image));
-			image = reconstructed;
+			if (settings.reuse) {
+				reconstruct_diffuse_kernel<<<(count + threads - 1) / threads, threads>>>(
+					reconstructed, image, guides, width, height);
+				CUDA_CHECK(cudaGetLastError());
+				CUDA_CHECK(cudaFree(reconstructed));
+			} else {
+				CUDA_CHECK(cudaFree(image));
+				image = reconstructed;
+			}
 		}
 		if (settings.hybrid_samples > 0) {
 			RenderConfig hybrid = settings;
@@ -1622,8 +1667,15 @@ int run(int argc, char** argv) {
 				reconstruct_mixed_kernel<<<(count + threads - 1) / threads, threads>>>(
 					image, reconstructed, guides, width, height);
 				CUDA_CHECK(cudaGetLastError());
-				CUDA_CHECK(cudaFree(image));
-				image = reconstructed;
+				if (settings.reuse) {
+					reconstruct_mixed_kernel<<<(count + threads - 1) / threads, threads>>>(
+						reconstructed, image, guides, width, height);
+					CUDA_CHECK(cudaGetLastError());
+					CUDA_CHECK(cudaFree(reconstructed));
+				} else {
+					CUDA_CHECK(cudaFree(image));
+					image = reconstructed;
+				}
 			}
 		}
 		if (guides) CUDA_CHECK(cudaFree(guides));

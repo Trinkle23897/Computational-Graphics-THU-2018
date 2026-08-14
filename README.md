@@ -43,7 +43,7 @@ OpenMP: 2, GPU: 5
 其他额外效果: 凹凸贴图、体积光等: [5, ?]
 ```
 
-代码基于 smallpt，实现路径追踪（PT）、随机渐进式光子映射（SPPM）和新的 CUDA 混合低方差 SPPM。原始花瓶场景与原 `balls` 分支的玻璃球场景现在都在 `master`，通过 `--scene vase` / `--scene balls` 直接切换，不需要 checkout 其他分支。旋转 Bezier 曲面、彩色纹理、镜面反射、玻璃折射和光源构图均保留原始设定。课程报告见 [hw2/report.pdf](hw2/report.pdf)。
+代码基于 smallpt，实现路径追踪（PT）、随机渐进式光子映射（SPPM）、CUDA Hybrid SPPM，以及进一步降低噪声的分层复用 Hybrid SPPM。原始花瓶场景与原 `balls` 分支的玻璃球场景现在都在 `master`，通过 `--scene vase` / `--scene balls` 直接切换，不需要 checkout 其他分支。旋转 Bezier 曲面、彩色纹理、镜面反射、玻璃折射和光源构图均保留原始设定。课程报告见 [hw2/report.pdf](hw2/report.pdf)。
 
 ### 直接渲染结果
 
@@ -57,7 +57,7 @@ OpenMP: 2, GPU: 5
 
 ![Balls 场景：CUDA 混合低方差 SPPM 直接渲染](docs/render/balls-hybrid-sppm.png)
 
-### 新算法：材质分层的低方差 Hybrid SPPM
+### 新算法：分层复用 Hybrid SPPM
 
 直接 PT 从相机随机寻找光源，漫反射表面上的大部分路径贡献很小；传统 SPPM 能稳定找到焦散，但容易把镜面高光和清晰倒影混进光子半径，或者把大量阴影样本浪费在看不见的光源上。新算法把同一条光传输积分拆成适合不同采样器的部分：
 
@@ -66,10 +66,12 @@ $$L_o = L_{\mathrm{diffuse,SPPM}} + L_{\mathrm{specular,PT}} + L_{\mathrm{direct
 1. **GPU 光子映射负责漫反射和焦散。** 相机可见点与光子落点进入空间哈希，通过同一物体、法线和搜索半径汇合；每个像素独立更新半径及累计通量。球形和盒形光源按面积与发光功率采样，玻璃界面使用正确的 $\eta^2$ 传输 Jacobian，因此玻璃球内的五个光源也能贡献折射和焦散。
 2. **镜面与折射使用条件分层 PT。** 对 `specular=0.01` 之类的稀有 BSDF 分量直接单独采样，再乘回它的真实权重，不必等待普通路径以 1% 概率碰巧撞上它。地板倒影、玻璃边缘和花瓶高光独立累积，不会被 SPPM 的汇合半径抹糊。
 3. **直接光照只采样真正可见的光源。** 玻璃壳里的灯仍进入光子分布，但不会出现在必定被外壳遮挡的 next-event-estimation 分布中；盒形灯只采样朝向着色点的面，并补偿正确 PDF。这样同等阴影射线数量能得到更多有效贡献。
-4. **在材质空间自适应重建，而不是糊整张图。** 漫反射先拆出反照率，再按物体 ID、法线、几何位置和颜色重建照度；混合材质及透明玻璃根据局部方差扩大支持区域，同时保护贴图边缘和镜面高光。重建属于有约束的偏差—方差折中，不会假装自己是无偏估计。
-5. **用独立随机种子衡量真实噪声。** 旧参考图本身也有随机颗粒，逐像素逼近它并不能说明收敛更快。对两个独立结果使用 $\sigma \approx \sqrt{\mathbb{E}[(I_1-I_2)^2]/2}$；花纹、反射、高光等稳定结构自动抵消。多个 seed 在线性辐射亮度域平均，估计噪声继续按 $1/\sqrt{N}$ 下降。
+4. **直接对光路的重要随机变量分层。** 光子按照功率分层选择光源，避免五个球内光源在某一轮碰巧采样失衡；花瓶一类混合材质对漫反射/镜面选择做随机分层，不再完全依赖 Bernoulli 碰运气。玻璃则将菲涅耳分支概率从 $0.25+0.5F$ 改成 $0.1+0.8F$，并保留 $F/p$ 和 $(1-F)/(1-p)$ 的权重补偿：更少时间浪费在低贡献的内部反射上，积分本身不变。
+5. **让每个有效样本服务相近的着色点。** 漫反射先拆出反照率，再按物体 ID、法线、几何位置和纹理颜色进行两轮照度复用；镜面和玻璃另外进行两轮局部方差引导的复用，高光、地板倒影和条纹边界各自隔离。邻域复用是明确的偏差—方差折中，不会假装是无偏 ReSTIR；光源分层、BSDF 分层和菲涅耳 PDF 补偿保持原估计量。
+6. **把平面光子查询从 27 格降到 9 格。** 对盒体平面先用几何面的精确坐标统一空间哈希，再只查询沿切平面的 3×3 邻域。先做坐标统一很重要：如果直接删掉法线方向的邻居，刚好落在哈希格边界的光子会消失，画面会变暗。球体和曲面仍保留原来的 27 格查询。
+7. **用独立随机种子衡量真实噪声。** 旧参考图本身也有随机颗粒，逐像素逼近它并不能说明收敛更快。对两个独立结果使用 $\sigma \approx \sqrt{\mathbb{E}[(I_1-I_2)^2]/2}$；四个及以上 seed 直接计算每个像素的样本标准差。花纹、反射、高光等稳定结构自动抵消，同时记录区域平均亮度和边缘梯度，防止通过调暗或者抹掉细节“降低噪声”。
 
-换句话说，速度提升来自**减少无效样本、降低 estimator 方差，再用 GPU 并行执行**，不是换掉场景、暗化画面或者把高光统一涂抹。实现见 [hw2/sppm/cuda.cu](hw2/sppm/cuda.cu)、[hw2/sppm/scene.hpp](hw2/sppm/scene.hpp) 和 [hw2/sppm/texture.hpp](hw2/sppm/texture.hpp)。
+换句话说，速度提升来自**减少无效光路、降低 estimator 方差、复用兼容样本并加速光子查询**，不是换掉场景、暗化画面或者把高光统一涂抹。实现见 [hw2/sppm/cuda.cu](hw2/sppm/cuda.cu)，完整实验脚本见 [hw2/sppm/benchmark.py](hw2/sppm/benchmark.py)。
 
 #### 同场景渲染对比
 
@@ -80,8 +82,47 @@ $$L_o = L_{\mathrm{diffuse,SPPM}} + L_{\mathrm{specular,PT}} + L_{\mathrm{direct
 | CUDA PT | ![花瓶 PT](docs/render/vase-pt.png) | ![Balls PT](docs/render/balls-pt.png) |
 | CUDA SPPM | ![花瓶 SPPM](docs/render/vase-sppm.png) | ![Balls SPPM](docs/render/balls-sppm.png) |
 | CUDA Hybrid SPPM | ![花瓶 Hybrid SPPM](docs/render/vase-hybrid-comparison.png) | ![Balls Hybrid SPPM](docs/render/balls-hybrid-comparison.png) |
+| CUDA 分层复用 Hybrid SPPM | ![花瓶分层复用 Hybrid SPPM](docs/render/vase-reuse-comparison.png) | ![Balls 分层复用 Hybrid SPPM](docs/render/balls-reuse-comparison.png) |
 
-以上对比图分辨率均为 960×540；PT 使用每子像素 64 次采样，两种 SPPM 均使用 48 轮，花瓶每轮每像素 5 个光子、balls 每轮每像素 8 个光子。以 balls 背景平滑区域为例，8-bit 高通颗粒 RMS 从 PT 的 18.44 降至普通 SPPM 的 1.17，再降至 Hybrid SPPM 的 0.23；后两者该区域平均亮度分别是 49.36 和 49.43，没有通过调暗来掩盖噪点。因为三种 estimator 的计算量不同，这里对比的是各自固定参数下的实际输出，不把它们冒充成严格同耗时 benchmark。
+以上对比图分辨率均为 960×540；PT 使用每子像素 64 次采样，三种 SPPM 均使用 48 轮，花瓶每轮每像素 5 个光子、balls 每轮每像素 8 个光子。因为四种 estimator 的计算量不同，图片仅展示各自固定参数下的直接渲染效果；迭代次数、实际时间和独立 seed 噪声的严格对比见下表。
+
+#### 160 次直接渲染的收敛基准
+
+测试使用一张 NVIDIA H200、640×360 分辨率、四个独立随机种子，以及 4、8、16、32、64 五个迭代档位。PT 的“16 轮”等价于每子像素 128 次采样；其他算法是 16 轮光子映射。每个场景分别在五个固定区域测量 8-bit 亮度的跨 seed RMS，并对五个区域取 RMS 作为综合噪声；CUDA event 只统计 GPU kernel 时间，不包括 CUDA 初始化、贴图上传或图像写出。
+
+![四种算法按迭代次数和 GPU 实际耗时计算的独立随机种子噪声收敛曲线](docs/render/convergence.png)
+
+**16 轮、四个独立随机种子：**
+
+| 场景 | 算法 | GPU kernel | 综合噪声 RMS | 重点区域 A | 重点区域 B |
+| --- | --- | ---: | ---: | ---: | ---: |
+| 花瓶 | PT | 2.434 s | 17.615 | 白瓷 18.721 | 蓝花 19.021 |
+| 花瓶 | SPPM | 1.603 s | 3.699 | 白瓷 4.056 | 蓝花 4.932 |
+| 花瓶 | Hybrid SPPM | 3.547 s | 2.073 | 白瓷 2.179 | 蓝花 2.045 |
+| 花瓶 | 分层复用 Hybrid | 3.534 s | **1.905** | 白瓷 **1.958** | 蓝花 **1.862** |
+| Balls | PT | 1.079 s | 12.447 | 背景 13.898 | 玻璃 16.470 |
+| Balls | SPPM | 1.302 s | 5.901 | 背景 6.131 | 玻璃 6.129 |
+| Balls | Hybrid SPPM | 2.271 s | 1.379 | 背景 1.315 | 玻璃 1.934 |
+| Balls | 分层复用 Hybrid | 2.074 s | **0.923** | 背景 **0.883** | 玻璃 **0.999** |
+
+**旧 Hybrid 与新算法的完整迭代曲线：**
+
+| 场景 | 迭代 | 旧 Hybrid 噪声 / 时间 | 分层复用噪声 / 时间 |
+| --- | ---: | ---: | ---: |
+| 花瓶 | 4 | 3.922 / 0.969 s | **3.163** / 0.939 s |
+| 花瓶 | 8 | 2.786 / 1.887 s | **2.379** / 1.803 s |
+| 花瓶 | 16 | 2.073 / 3.547 s | **1.905** / 3.534 s |
+| 花瓶 | 32 | 1.618 / 6.887 s | **1.546** / 6.844 s |
+| 花瓶 | 64 | **1.320** / 13.588 s | 1.344 / 13.646 s |
+| Balls | 4 | 3.089 / 0.677 s | **1.802** / 0.647 s |
+| Balls | 8 | 1.984 / 1.251 s | **1.265** / 1.122 s |
+| Balls | 16 | 1.379 / 2.271 s | **0.923** / 2.074 s |
+| Balls | 32 | 0.975 / 4.396 s | **0.681** / 3.994 s |
+| Balls | 64 | 0.683 / 8.730 s | **0.500** / 7.900 s |
+
+固定质量下可以用 $\sigma^2 t$ 比较方差—时间成本，越低越好。16 轮时，balls 从 4.319 降到 1.767，效率提升 **2.44×**；花瓶从 15.242 降到 12.826，提升 **1.19×**。balls 达到综合噪声 RMS < 1 时，旧 Hybrid 需要 32 轮 / 4.396 s，新算法只需要 16 轮 / 2.074 s。按 $\sigma \propto n^{-p}$ 拟合 4–64 轮，balls 上旧 Hybrid $p=0.538$、新算法 $p=0.459$：收益主要来自更低的方差常数和单轮成本，并没有改变 Monte Carlo 的渐近阶数；花瓶在 64 轮时优势也基本消失，不应把短预算下的收益外推成任意场景都更快。
+
+颜色与细节同时作为约束：16 轮时 balls 背景亮度 49.26 → 49.27，花瓶整体亮度 128.51 → 128.57；彩色条纹边缘梯度 430.38 → 430.30，地板倒影边缘 155.32 → 153.65。玻璃边缘 57.44 → 54.16，存在约 5.7% 的邻域复用平滑代价。完整原始指标见 [docs/render/convergence.csv](docs/render/convergence.csv)，可运行下文的 `benchmark.py` 原样复现。
 
 在一张 NVIDIA H200 上，以 640×360 分辨率对比 16 线程 CPU：
 
@@ -164,43 +205,59 @@ nvcc -O3 -arch=sm_90 -std=c++17 cuda.cu -o render-cuda
 ./render-cuda 640 360 balls-pt.ppm 32 --scene balls
 ```
 
-5. 使用同一个二进制渲染普通 SPPM 或低方差 Hybrid SPPM：
+5. 使用同一个二进制渲染普通 SPPM、旧版 Hybrid，或新的分层复用 Hybrid：
 
 ```bash
 # 花瓶：普通 SPPM
 ./render-cuda 960 540 vase-sppm.ppm 48 5 .45 1 \
   --scene vase --nearest
 
-# 花瓶：低方差 Hybrid SPPM，保留白瓷高光、蓝色纹样和地板星星
-./render-cuda 1920 1080 vase-hybrid.ppm 96 5 .35 1 \
+# 花瓶：分层复用 Hybrid SPPM，保留白瓷高光、蓝色纹样和地板星星
+./render-cuda 1920 1080 vase-reuse.ppm 96 5 .35 1 \
   --scene vase --nearest --shadow-samples 2 \
-  --hybrid-samples 2048 --reconstruction-radius 4
+  --hybrid-samples 2048 --reconstruction-radius 4 --reuse
 
-# Balls：自动设置原分支的相机和五个球内光源
-./render-cuda 1920 1080 balls-hybrid.ppm 96 8 .4 1 \
+# Balls：同一套算法，自动设置原分支的相机和五个球内光源
+./render-cuda 1920 1080 balls-reuse.ppm 96 8 .4 1 \
   --scene balls --nearest --hybrid-samples 2048 \
-  --reconstruction-radius 8
+  --reconstruction-radius 8 --reuse
 
 # 8K 花瓶；高分辨率下相应缩小光子汇合半径
 ./render-cuda 7680 4320 vase-8k.ppm 64 1 .1 1 \
   --scene vase --nearest --hybrid-samples 384 \
-  --reconstruction-radius 6
+  --reconstruction-radius 6 --reuse
 ```
 
-前四个位置参数表示 `宽度 高度 输出文件 每子像素采样数`，对应 PT；再提供 `每像素光子数 初始半径 alpha` 就切换到 SPPM。CUDA SPPM 只输出最终结果。多卡机器用 `CUDA_VISIBLE_DEVICES=0` 指定 GPU。
+前四个位置参数表示 `宽度 高度 输出文件 每子像素采样数`，对应 PT；再提供 `每像素光子数 初始半径 alpha` 就切换到 SPPM。`--reuse` 打开新算法；去掉它即可对比原来的 Hybrid SPPM。CUDA SPPM 只输出最终结果。多卡机器用 `CUDA_VISIBLE_DEVICES=0` 指定 GPU。
 
 6. 可选：无损转换成网页可直接显示的 PNG：
 
 ```bash
 python3 -m pip install Pillow
-python3 -c 'from PIL import Image; Image.open("vase-hybrid.ppm").save("vase-hybrid.png")'
+python3 -c 'from PIL import Image; Image.open("vase-reuse.ppm").save("vase-reuse.png")'
 ```
+
+7. 复现实验；下面会渲染两个场景、四种算法、五个迭代档位、四个随机种子，共 160 张图：
+
+```bash
+python3 -m pip install numpy Pillow scipy matplotlib
+python3 benchmark.py --binary ./render-cuda \
+  --iterations 4,8,16,32,64 --seeds 0,1,2,3 \
+  --gpus 0,1,2,3,4,5,6,7 --output /tmp/sppm-convergence
+
+# 单卡把 --gpus 改成 0；快速验证可以缩短为：
+python3 benchmark.py --binary ./render-cuda \
+  --iterations 4,8 --seeds 0,1 --gpus 0
+```
+
+输出目录包含每张直接渲染的 PPM、每次 GPU kernel 计时、逐区域亮度/噪声/边缘指标、`convergence.csv`、`convergence.json` 和收敛曲线 `convergence.png`。
 
 #### CUDA 参数与材质
 
 | 效果 | 参数 | 说明 |
 | --- | --- | --- |
 | 场景 | `--scene vase` / `--scene balls` | 同时切换场景、光源和默认相机 |
+| 分层复用 | `--reuse` | 光源与材质分层、菲涅耳重要性采样、几何约束复用和 9-cell 平面光子查询 |
 | 镜面分层 | `--hybrid-samples 2048` | 独立采样稀有镜面和折射，保留真实 BSDF 权重 |
 | 引导重建 | `--reconstruction-radius 4` | 根据物体、法线、反照率、深度和局部方差压低随机噪声 |
 | 独立随机序列 | `--seed 7` | 让相机、光子和材质采样可复现 |
